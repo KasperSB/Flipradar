@@ -28,7 +28,7 @@ HEADERS = {
 }
 
 # ---------- Indstillinger ----------
-MAX_PRICE = 4_500_000      # boliger til salg op til denne pris
+MAX_PRICE = 10_000_000     # boliger til salg op til denne pris
 SALES_DAYS = 120           # handler fra de seneste 4 måneder
 FALLBACK_DAYS = 180        # bruges kun, hvis der er for få handler
 MIN_COMPS = 8              # mindst så mange handler før tallet regnes som solidt

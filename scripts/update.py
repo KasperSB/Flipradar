@@ -234,28 +234,40 @@ def fetch_listings_query(params, label):
     return cases, total
 
 
-def fetch_listings():
+SINGLE_ZIPS = [2000, 2100, 2150, 2200, 2300, 2400, 2450, 2500, 2700, 2720]
+
+
+def fetch_listings(sales):
+    """Henter boliger pr. postnummer. De mange små postnumre i K, V og på
+    Frederiksberg tages fra Boligas handler, så vi kun spørger på numre, der findes."""
     log("Henter boliger fra Boligsiden ...")
     types = "condo,terraced house,villa"
-    cases, total = fetch_listings_query(
-        {"addressTypes": types, "municipalities": "koebenhavn,frederiksberg"}, "kommuner")
-    inside = sum(1 for c in cases if district((c.get("address") or {}).get("zipCode")))
-    log(f"  Søgning på kommuner: {len(cases)} boliger hentet af {total}, {inside} i vores områder")
-    if not cases or total is None or total > 8000 or inside < 0.7 * len(cases):
-        log("  Kommunesøgningen så forkert ud, henter i stedet pr. postnummer ...")
-        cases = []
-        for lo, hi in ZIP_RANGES:
-            zips = [str(z) for z in range(lo, hi + 1)]
-            for i in range(0, len(zips), 60):
-                part, _ = fetch_listings_query(
-                    {"addressTypes": types, "zipCodes": ",".join(zips[i:i + 60])}, f"{lo}-{hi}")
-                cases.extend(part)
+    small = {int(s["postnr"]) for s in sales if s.get("postnr") and 1000 <= int(s["postnr"]) < 2000}
+    zips = sorted(small) + SINGLE_ZIPS
+    log(f"  Spørger på {len(zips)} postnumre ({len(small)} små postnumre i K, V og Frederiksberg)")
+    cases = []
+    for i in range(0, len(zips), 15):
+        chunk = zips[i:i + 15]
+        part, total = fetch_listings_query(
+            {"addressTypes": types, "zipCodes": ",".join(map(str, chunk))}, f"{chunk[0]}-{chunk[-1]}")
+        if not part and len(chunk) > 1:
+            # Listen blev ikke accepteret: spørg på ét postnummer ad gangen
+            for z in chunk:
+                one, _ = fetch_listings_query({"addressTypes": types, "zipCodes": str(z)}, str(z))
+                cases.extend(one)
+                time.sleep(0.5)
+        else:
+            cases.extend(part)
     out, seen = [], set()
     for c in cases:
         p = parse_case(c)
         if p and p["id"] not in seen and p["pris"] <= MAX_PRICE:
             seen.add(p["id"])
             out.append(p)
+    per = {}
+    for l in out:
+        per[l["distrikt"]] = per.get(l["distrikt"], 0) + 1
+    log("  Boliger pr. bydel: " + ", ".join(f"{d}: {n}" for d, n in sorted(per.items())))
     log(f"  {len(out)} boliger til salg under {MAX_PRICE:,} kr. i vores områder".replace(",", "."))
     return out
 
@@ -422,8 +434,8 @@ def zone_stats(sales):
 
 
 def main():
-    listings = fetch_listings()
     sales = fetch_sales()
+    listings = fetch_listings(sales)
     if not listings or not sales:
         log("Mangler data fra en af kilderne. Den gamle datafil bevares.")
         sys.exit(1)

@@ -127,6 +127,7 @@ dialog::backdrop{background:rgba(24,35,43,.45)}
   <label class="chk"><input type="checkbox" id="budget">Kun inden for budget</label>
   <label class="chk"><input type="checkbox" id="ude">Kun altan eller terrasse</label>
   <label class="chk"><input type="checkbox" id="fav">Kun favoritter</label>
+  <label class="chk"><input type="checkbox" id="hjem" checked>Skjul hjemfaldspligt</label>
   <label class="chk"><input type="checkbox" id="saer">Vis særlige boliger</label>
 </form>
 <main class="main" id="main">
@@ -139,6 +140,7 @@ dialog::backdrop{background:rgba(24,35,43,.45)}
 <script>
 /* Flipradar: læser data/listings.json, som dataindsamleren opdaterer */
 let LISTINGS=[],ZONES=[],Z={},byId={},DISTRICTS=[],META={};
+const HJEMFALD=/hjemfald/i;
 const FLIPWORDS=/kærlig hånd|renoveringsbehov|renoveringskrævende|dødsbo|potentiale|istandsæt|oprindelig stand|projektbolig|håndværksmæssigt anlagt|som beset|trænger til/i;
 
 /* ---------- Gemte data (pr. browser indtil synk er sat op) ---------- */
@@ -178,6 +180,7 @@ function gauge(r){if(r==null)return '<span class="gauge small">Ingen markedsdata
 function tags(l,c){const t=[],mk=l.marked||{};
  if(l.saerlig)t.push(`<span class="tag warn">Særlige vilkår: ${esc(l.saerlig)}</span>`);
  if(tjek(l))t.push('<span class="tag warn">Tjek prisen</span>');
+ if(l.hjemfald)t.push('<span class="tag warn">Hjemfaldspligt</span>');
  if(l.flag)t.push('<span class="tag">Projektbolig</span>');
  if(l.prisaendring<0)t.push(`<span class="tag">Sat ned ${fmt(-l.prisaendring)} %</span>`);
  if(l.liggetid>90)t.push(`<span class="tag plain">${l.liggetid} dage til salg</span>`);
@@ -197,9 +200,9 @@ $('sort').addEventListener('change',()=>{dir=DEFDIR[$('sort').value];setDirLabel
 $('dir').addEventListener('click',()=>{dir*=-1;setDirLabel();render()});
 $('filters').addEventListener('input',e=>{if(e.target.id!=='sort')render()});
 function filtered(){const q=$('q').value.trim().toLowerCase(),d=$('d').value,t=$('t').value,
- max=+$('max').value||Infinity,min=+$('min').value||0,proj=$('proj').checked,bud=$('budget').checked,fav=$('fav').checked,ude=$('ude').checked,saer=$('saer').checked;
+ max=+$('max').value||Infinity,min=+$('min').value||0,proj=$('proj').checked,bud=$('budget').checked,fav=$('fav').checked,ude=$('ude').checked,saer=$('saer').checked,hjem=$('hjem').checked;
  const arr=LISTINGS.filter(l=>(!d||l.distrikt===d)&&(!t||(t==='hus'?l.type!=='Ejerlejlighed':l.type===t))&&l.pris<=max&&l.m2>=min
-  &&(!proj||l.flag)&&(!fav||S.favs[l.id])&&(!ude||l.altan||l.terrasse)&&(saer||!l.saerlig)&&(!bud||calc(l).budgetOK)
+  &&(!proj||l.flag)&&(!fav||S.favs[l.id])&&(!ude||l.altan||l.terrasse)&&(saer||!l.saerlig)&&(!hjem||!l.hjemfald)&&(!bud||calc(l).budgetOK)
   &&(!q||(l.adresse+' '+l.postnr+' '+l.by+' '+l.distrikt+' '+(Z[l.zone]?.n||'')).toLowerCase().includes(q)));
  const key={m2pris:l=>l.m2pris,pris:l=>l.pris,m2:l=>l.m2,rabat:l=>l.rabat,avance:l=>calc(l).avance,liggetid:l=>l.liggetid,rank:l=>zoneRank(Z[l.zone])}[$('sort').value];
  return arr.sort((a,b)=>{const ta=tjek(a)||!!a.saerlig,tb=tjek(b)||!!b.saerlig;if(ta!==tb)return ta?1:-1;const x=key(a),y=key(b);if(x==null&&y==null)return 0;if(x==null)return 1;if(y==null)return -1;return(x-y)*dir})}
@@ -327,7 +330,7 @@ document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',(
 /* ---------- Indlæs data ---------- */
 function init(d){META=d;ZONES=d.zoner||[];Z=Object.fromEntries(ZONES.map(z=>[z.id,z]));
  LISTINGS=(d.boliger||[]).filter(l=>l.id&&l.lat&&l.lng);
- LISTINGS.forEach(l=>{const n=l.marked?.niveau;l.rabat=n?1-l.m2pris/n:null;l.flag=FLIPWORDS.test((l.titel||'')+' '+(l.beskrivelse||''))});
+ LISTINGS.forEach(l=>{const n=l.marked?.niveau;l.rabat=n?1-l.m2pris/n:null;l.flag=FLIPWORDS.test((l.titel||'')+' '+(l.beskrivelse||''));l.hjemfald=HJEMFALD.test((l.titel||'')+' '+(l.beskrivelse||''))});
  byId=Object.fromEntries(LISTINGS.map(l=>[l.id,l]));
  DISTRICTS=[...new Set(ZONES.map(z=>z.d))];
  DISTRICTS.forEach(x=>$('d').insertAdjacentHTML('beforeend',`<option>${esc(x)}</option>`));

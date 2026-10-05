@@ -27,7 +27,7 @@ jobs:
         run: |
           git config user.name "flipradar-bot"
           git config user.email "flipradar-bot@users.noreply.github.com"
-          git add data/listings.json
+          git add data/listings.json data/sales.json
           git commit -m "Opdaterede boligdata $(date -u +%Y-%m-%d_%H%M)" || exit 0
           git pull --rebase
           git push

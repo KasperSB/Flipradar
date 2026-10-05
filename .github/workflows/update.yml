@@ -1,0 +1,33 @@
+name: Opdater boligdata
+
+on:
+  schedule:
+    - cron: "15 */3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-data
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Hent boliger og handler
+        run: python scripts/update.py
+      - name: Gem de nye data
+        run: |
+          git config user.name "flipradar-bot"
+          git config user.email "flipradar-bot@users.noreply.github.com"
+          git add data/listings.json
+          git commit -m "Opdaterede boligdata $(date -u +%Y-%m-%d_%H%M)" || exit 0
+          git pull --rebase
+          git push

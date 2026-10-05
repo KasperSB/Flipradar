@@ -7,6 +7,7 @@ Resultatet gemmes i data/listings.json, som Flipradar-siden læser.
 Bruger kun Pythons standardbibliotek.
 """
 import json
+import re
 import math
 import os
 import statistics
@@ -64,6 +65,13 @@ ZONES = [
     ("b1", "Brønshøj/Husum", "Brønshøj Torv", 55.7050, 12.4950), ("b2", "Brønshøj/Husum", "Husum", 55.7110, 12.4650),
 ]
 
+# Boliger med særlige vilkår, som ikke kan sammenlignes med almindelige frie salg
+SPECIAL = re.compile(
+    r"udlejet|\blejer(?:en|ne)?\b|lejekontrakt|lejeindtægt|investeringsbolig|kollegie|ungdomsbolig|"
+    r"seniorbolig|ældrebolig|plejebolig|\bandel|haveforening|kolonihave|\bhf\.|husbåd|houseboat|"
+    r"fritidsbolig|sommerhus|lejet grund|ikke godkendt til (?:hel[åa]rs)?beboelse|erhvervslejemål|"
+    r"erhvervsejendom|byggegrund|grund til salg|tvangsauktion|auktion", re.I)
+
 TYPE_MAP = {"condo": "Ejerlejlighed", "terraced house": "Rækkehus", "villa": "Villa"}
 GROUP = {"Ejerlejlighed": "lejl", "Rækkehus": "hus", "Villa": "hus"}
 BOLIGA_GROUP = {3: "lejl", 9: "lejl", 1: "hus", 2: "hus"}
@@ -75,15 +83,16 @@ def log(*a):
     print(*a, flush=True)
 
 
-def get_json(url, tries=3):
+def get_json(url, tries=5):
     for i in range(tries):
         try:
             req = urllib.request.Request(url, headers=HEADERS)
             with urllib.request.urlopen(req, timeout=45) as r:
                 return json.loads(r.read().decode("utf-8"))
         except Exception as e:  # netværksfejl, blokering, ugyldig JSON
-            log(f"  Forsøg {i + 1} fejlede: {e}")
-            time.sleep(3 * (i + 1))
+            wait = 10 * 2 ** i
+            log(f"  Forsøg {i + 1} fejlede ({e}), venter {wait} sek.")
+            time.sleep(wait)
     return None
 
 
@@ -168,6 +177,8 @@ def parse_case(c):
     regs = [r for r in (a.get("registrations") or []) if r.get("amount") and r.get("date")]
     regs.sort(key=lambda r: r["date"], reverse=True)
     tom = ((c.get("timeOnMarket") or {}).get("total") or {}).get("days")
+    text = " ".join([street, c.get("descriptionTitle") or "", c.get("descriptionBody") or ""])
+    special = SPECIAL.search(text)
     lat, lon = coords["lat"], coords["lon"]
     return {
         "id": c.get("caseID"),
@@ -192,6 +203,7 @@ def parse_case(c):
         "elevator": bool(c.get("hasElevator")),
         "terrasse": bool(c.get("hasTerrace")),
         "asbest": "asbest" in roofs.lower(),
+        "saerlig": special.group(0).lower() if special else None,
         "titel": c.get("descriptionTitle") or "",
         "beskrivelse": c.get("descriptionBody") or "",
         "lat": lat,
@@ -283,31 +295,59 @@ def parse_sale(r):
     }
 
 
+SALES_CACHE = os.path.join(ROOT, "data", "sales.json")
+
+
+def load_cache():
+    try:
+        with open(SALES_CACHE, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
 def fetch_sales():
     log("Henter frie handler fra Boliga ...")
     since = (NOW - timedelta(days=FALLBACK_DAYS)).date().isoformat()
+    cache, fresh = load_cache(), {}
     sales, raw = [], 0
     for lo, hi in ZIP_RANGES:
-        page = 1
+        key, ok, part, page = f"{lo}-{hi}", True, [], 1
         while page <= 80:
             url = ("https://api.boliga.dk/api/v2/sold/search/results?searchTab=1&sort=date-d"
                    f"&page={page}&zipcodeFrom={lo}&zipcodeTo={hi}&salesDateMin={since}")
             data = get_json(url)
             if data is None:
-                log(f"  {lo}-{hi}: ingen svar på side {page}")
+                ok = False
                 break
             results = data.get("results") or []
             raw += len(results)
             for r in results:
                 s = parse_sale(r)
                 if s and s["alder"] <= FALLBACK_DAYS:
-                    sales.append(s)
+                    part.append(s)
             if not results or page >= (data.get("meta") or {}).get("totalPages", 1):
                 break
             page += 1
-            time.sleep(1)
-    log(f"  {raw} handler i alt, heraf {len(sales)} almindelige frie handler af lejligheder og huse")
+            time.sleep(1.5)
+        if ok:
+            fresh[key] = part
+            log(f"  {key}: {len(part)} frie handler")
+        else:
+            old = [s for s in cache.get(key, []) if refresh_age(s) <= FALLBACK_DAYS]
+            fresh[key] = old
+            log(f"  {key}: Boliga svarede ikke, bruger {len(old)} handler fra sidste kørsel")
+        sales.extend(fresh[key])
+        time.sleep(3)
+    with open(SALES_CACHE, "w", encoding="utf-8") as f:
+        json.dump(fresh, f, ensure_ascii=False, separators=(",", ":"))
+    log(f"  {raw} handler hentet, i alt {len(sales)} almindelige frie handler af lejligheder og huse")
     return sales
+
+
+def refresh_age(s):
+    s["alder"] = (NOW.date() - datetime.fromisoformat(s["dato"]).date()).days
+    return s["alder"]
 
 
 # ---------- Markedsniveau ----------
@@ -373,12 +413,11 @@ def zone_stats(sales):
         zones.append({"id": zid, "d": d, "n": name, "lat": lat, "lng": lon,
                       "m2": round(statistics.median(vals)) if vals else None, "antal": len(vals)})
     for d in {z["d"] for z in zones}:
-        zs = sorted([z for z in zones if z["d"] == d and z["m2"]], key=lambda z: -z["m2"])
+        zs = sorted([z for z in zones if z["d"] == d and z["antal"] >= 5], key=lambda z: -z["m2"])
         for i, z in enumerate(zs):
             z["autoRank"] = 1 if len(zs) == 1 else 1 + round(9 * i / (len(zs) - 1))
         for z in zones:
-            if z["d"] == d and not z.get("m2"):
-                z["autoRank"] = 10
+            z.setdefault("autoRank", None)
     return zones
 
 
@@ -399,6 +438,7 @@ def main():
     for l in listings:
         l["marked"] = market_for(l, sales, listings, fallback)
     solid = sum(1 for l in listings if l["marked"]["solid"])
+    log(f"Særlige vilkår fundet i {sum(1 for l in listings if l['saerlig'])} annoncer (fx udlejet, andel, kolonihave)")
     log(f"Markedsniveau beregnet: {solid} af {len(listings)} boliger har mindst {MIN_COMPS} handler fra de seneste {SALES_DAYS} dage")
 
     os.makedirs(os.path.dirname(OUT_FILE), exist_ok=True)

@@ -127,6 +127,7 @@ dialog::backdrop{background:rgba(24,35,43,.45)}
   <label class="chk"><input type="checkbox" id="budget">Kun inden for budget</label>
   <label class="chk"><input type="checkbox" id="ude">Kun altan eller terrasse</label>
   <label class="chk"><input type="checkbox" id="fav">Kun favoritter</label>
+  <label class="chk"><input type="checkbox" id="saer">Vis særlige boliger</label>
 </form>
 <main class="main" id="main">
   <section class="list" id="list" aria-label="Boliger"></section>
@@ -147,7 +148,10 @@ let S={favs:{},meta:{},rank:{},snap:{},settings:{...DEF}};
 try{const s=JSON.parse(localStorage.getItem(LS));if(s)S={...S,...s,snap:s.snap||{},settings:{...DEF,...(s.settings||{})}}}catch(e){}
 function save(){try{localStorage.setItem(LS,JSON.stringify(S))}catch(e){}}
 const meta=id=>S.meta[id]||(S.meta[id]={level:'Mellem',status:'Ny',note:''});
-const zoneRank=z=>z?(S.rank[z.id]||z.autoRank):null;
+const zoneRank=z=>z?(S.rank[z.id]||z.autoRank||null):null;
+const rankTxt=z=>zoneRank(z)??'–';
+const TJEK=0.4; /* mere end 40 % under markedet: tjek prisen */
+const tjek=l=>l.rabat!=null&&l.rabat>TJEK;
 
 /* ---------- Hjælpere ---------- */
 const $=id=>document.getElementById(id);
@@ -172,6 +176,8 @@ function gauge(r){if(r==null)return '<span class="gauge small">Ingen markedsdata
  const p=Math.max(-.3,Math.min(.3,r)),w=Math.abs(p)/.3*50,st=p>=0?`left:50%;width:${w}%`:`right:50%;width:${w}%`;
  return `<span class="gauge" title="m²-pris sammenlignet med markedsniveauet"><span class="gbar"><span class="gfill" style="${st};background:${colorFor(r)}"></span></span>${r>=0?fmt(r*100)+' % under':fmt(-r*100)+' % over'} marked</span>`}
 function tags(l,c){const t=[],mk=l.marked||{};
+ if(l.saerlig)t.push(`<span class="tag warn">Særlige vilkår: ${esc(l.saerlig)}</span>`);
+ if(tjek(l))t.push('<span class="tag warn">Tjek prisen</span>');
  if(l.flag)t.push('<span class="tag">Projektbolig</span>');
  if(l.prisaendring<0)t.push(`<span class="tag">Sat ned ${fmt(-l.prisaendring)} %</span>`);
  if(l.liggetid>90)t.push(`<span class="tag plain">${l.liggetid} dage til salg</span>`);
@@ -191,12 +197,12 @@ $('sort').addEventListener('change',()=>{dir=DEFDIR[$('sort').value];setDirLabel
 $('dir').addEventListener('click',()=>{dir*=-1;setDirLabel();render()});
 $('filters').addEventListener('input',e=>{if(e.target.id!=='sort')render()});
 function filtered(){const q=$('q').value.trim().toLowerCase(),d=$('d').value,t=$('t').value,
- max=+$('max').value||Infinity,min=+$('min').value||0,proj=$('proj').checked,bud=$('budget').checked,fav=$('fav').checked,ude=$('ude').checked;
+ max=+$('max').value||Infinity,min=+$('min').value||0,proj=$('proj').checked,bud=$('budget').checked,fav=$('fav').checked,ude=$('ude').checked,saer=$('saer').checked;
  const arr=LISTINGS.filter(l=>(!d||l.distrikt===d)&&(!t||(t==='hus'?l.type!=='Ejerlejlighed':l.type===t))&&l.pris<=max&&l.m2>=min
-  &&(!proj||l.flag)&&(!fav||S.favs[l.id])&&(!ude||l.altan||l.terrasse)&&(!bud||calc(l).budgetOK)
+  &&(!proj||l.flag)&&(!fav||S.favs[l.id])&&(!ude||l.altan||l.terrasse)&&(saer||!l.saerlig)&&(!bud||calc(l).budgetOK)
   &&(!q||(l.adresse+' '+l.postnr+' '+l.by+' '+l.distrikt+' '+(Z[l.zone]?.n||'')).toLowerCase().includes(q)));
  const key={m2pris:l=>l.m2pris,pris:l=>l.pris,m2:l=>l.m2,rabat:l=>l.rabat,avance:l=>calc(l).avance,liggetid:l=>l.liggetid,rank:l=>zoneRank(Z[l.zone])}[$('sort').value];
- return arr.sort((a,b)=>{const x=key(a),y=key(b);if(x==null&&y==null)return 0;if(x==null)return 1;if(y==null)return -1;return(x-y)*dir})}
+ return arr.sort((a,b)=>{const ta=tjek(a)||!!a.saerlig,tb=tjek(b)||!!b.saerlig;if(ta!==tb)return ta?1:-1;const x=key(a),y=key(b);if(x==null&&y==null)return 0;if(x==null)return 1;if(y==null)return -1;return(x-y)*dir})}
 
 /* ---------- Kort ---------- */
 const map=L.map('map').setView([55.684,12.545],12);
@@ -208,7 +214,7 @@ esri.addTo(map);
 const zoneLayer=L.layerGroup().addTo(map),markers=L.layerGroup().addTo(map);
 function drawZones(){zoneLayer.clearLayers();const full=map.getZoom()>=14;ZONES.forEach(z=>{
  L.circle([z.lat,z.lng],{radius:520,color:'#3F7F6E',weight:1,fillOpacity:.06,interactive:false}).addTo(zoneLayer);
- L.marker([z.lat,z.lng],{interactive:false,icon:L.divIcon({className:'',iconSize:null,html:`<span class="zlabel">${zoneRank(z)}${full?' '+esc(z.n)+(z.m2?', '+fmt(z.m2)+' kr/m²':''):''}</span>`})}).addTo(zoneLayer)})}
+ L.marker([z.lat,z.lng],{interactive:false,icon:L.divIcon({className:'',iconSize:null,html:`<span class="zlabel">${rankTxt(z)}${full?' '+esc(z.n)+(z.m2?', '+fmt(z.m2)+' kr/m²':''):''}</span>`})}).addTo(zoneLayer)})}
 map.on('zoomend',drawZones);
 L.control.layers({'Gadekort':esri,'Lyst kort':esriGray,'Luftfoto':esriFoto,'OpenStreetMap':osm},{'Områder og rang':zoneLayer}).addTo(map);
 function drawMarkers(arr){markers.clearLayers();arr.forEach(l=>{
@@ -222,7 +228,7 @@ function rowHTML(l){const z=Z[l.zone],c=calc(l),f=!!S.favs[l.id];
  return `<div class="row${sel===l.id?' sel':''}" data-id="${esc(l.id)}" tabindex="0">
  <button class="heart${f?' on':''}" data-heart="${esc(l.id)}" aria-label="${f?'Fjern fra favoritter':'Gem som favorit'}">${f?'♥':'♡'}</button>
  <div class="addr">${esc(l.adresse)}</div><div class="price">${kr(l.pris)}</div>
- <div class="sub">${l.postnr} ${esc(l.by)}${z?', '+esc(z.n)+`<span class="rank" title="Områdets rang i ${esc(l.distrikt)} (1 er bedst)">${zoneRank(z)}</span>`:' '}${l.type}</div>
+ <div class="sub">${l.postnr} ${esc(l.by)}${z?', '+esc(z.n)+`<span class="rank" title="Områdets rang i ${esc(l.distrikt)} (1 er bedst)">${rankTxt(z)}</span>`:' '}${l.type}</div>
  <div class="nums"><span><b>${l.m2}</b> m²</span><span><b>${fmt(l.m2pris)}</b> kr/m²</span>${gauge(l.rabat)}</div>
  <div class="tags">${tags(l,c)}</div></div>`}
 function goneHTML(){const gone=Object.keys(S.favs).filter(id=>!byId[id]);if(!gone.length)return '';
@@ -252,7 +258,7 @@ function marketHTML(l){const mk=l.marked||{};
  ${mk.handler.map(h=>`<tr><td>${esc(h.a)}</td><td>${datoTxt(h.d)}</td><td class="r">${h.m2}</td><td class="r">${fmt(h.kvm)}</td><td class="r">${fmt(h.afst)} m</td></tr>`).join('')}</tbody></table></div>`:''}`}
 function openDrawer(id,keep){const l=byId[id];if(!l)return;const z=Z[l.zone],m=S.meta[id]||{level:'Mellem',status:'Ny',note:''},c=calc(l,m.level),s=S.settings,f=!!S.favs[id];
  sel=id;const dr=$('drawer');
- dr.innerHTML=`<div class="dhead"><div><h2>${esc(l.adresse)}</h2><div class="small">${l.postnr} ${esc(l.by)}${z?`, ${esc(z.n)} (områderang ${zoneRank(z)} af 10)`:''}</div></div>
+ dr.innerHTML=`<div class="dhead"><div><h2>${esc(l.adresse)}</h2><div class="small">${l.postnr} ${esc(l.by)}${z?`, ${esc(z.n)} (områderang ${rankTxt(z)} af 10)`:''}</div></div>
  <div><button class="heart${f?' on':''}" data-dheart aria-label="${f?'Fjern fra favoritter':'Gem som favorit'}">${f?'♥':'♡'}</button> <button class="btn" data-close>Luk</button></div></div>
  ${l.billede?`<img class="photo" src="${esc(l.billede)}" alt="" loading="lazy">`:''}
  <dl class="facts">
@@ -261,6 +267,8 @@ function openDrawer(id,keep){const l=byId[id];if(!l)return;const z=Z[l.zone],m=S
  <div><dt>Ejerudgift</dt><dd>${kr(l.ejerudgift)}/md</dd></div><div><dt>Liggetid</dt><dd>${l.liggetid} dage</dd></div><div><dt>Prisændring</dt><dd>${l.prisaendring?String(l.prisaendring).replace('.',',')+' %':'Ingen'}</dd></div>
  <div><dt>Altan/terrasse</dt><dd>${l.altan?'Altan':l.terrasse?'Terrasse':'Nej'}</dd></div><div><dt>Elevator</dt><dd>${l.elevator?'Ja':'Nej'}</dd></div><div><dt>Tag</dt><dd>${l.asbest?'<span class="bad">Asbest</span>':'–'}</dd></div></dl>
  <div>${gauge(l.rabat)}</div>
+ ${l.saerlig?`<p class="bad">Annoncen nævner "${esc(l.saerlig)}". Boligen har sandsynligvis særlige vilkår og kan ikke sammenlignes direkte med almindelige frie salg. Læs annoncen grundigt.</p>`:''}
+ ${!l.saerlig&&tjek(l)?'<p class="bad">Prisen ligger over 40 % under markedsniveauet. Det skyldes oftest særlige vilkår, som ikke fremgår af de første linjer i annoncen. Tjek annoncen, før du regner videre.</p>':''}
  ${l.titel?`<h3>${esc(l.titel)}</h3>`:''}<p>${esc(l.beskrivelse)}${l.beskrivelse.length>=480?' ...':''}</p>
  <p>${l.url?`<a class="btn" href="${esc(l.url)}" target="_blank" rel="noopener">Åbn annoncen</a>`:''} ${l.plantegning?`<a class="btn" href="${esc(l.plantegning)}" target="_blank" rel="noopener">Plantegning</a>`:''}</p>
  <h3>Markedsniveau</h3>${marketHTML(l)}
@@ -300,7 +308,7 @@ $('openSettings').addEventListener('click',()=>{const s=S.settings,dlg=$('settin
  dlg.innerHTML=`<h2>Antagelser</h2><p class="small">Bruges i flip-beregningen for alle boliger.</p>
  <div class="grid2">${FIELDS.map(([k,t])=>`<label>${t}<input type="number" step="any" data-k="${k}" value="${s[k]}"></label>`).join('')}</div>
  <h3>Områdernes rang</h3><p class="small">1 er det mest attraktive i bydelen, 10 det mindst attraktive. Forslaget er beregnet ud fra medianen af frie handler af lejligheder de seneste ${META.regler?.dage||120} dage. Skriv dit eget tal for at overskrive det.</p>
- ${DISTRICTS.map(d=>`<h3>${d}</h3>`+ZONES.filter(z=>z.d===d).sort((a,b)=>zoneRank(a)-zoneRank(b)).map(z=>`<div class="zrow"><span>${esc(z.n)} <span class="small">(${z.m2?fmt(z.m2)+' kr/m², '+z.antal+' handler':'ingen handler'}, forslag ${z.autoRank})</span></span><input type="number" min="1" max="10" data-z="${z.id}" value="${S.rank[z.id]||''}" placeholder="${z.autoRank}" aria-label="Rang for ${esc(z.n)}"></div>`).join('')).join('')}
+ ${DISTRICTS.map(d=>`<h3>${d}</h3>`+ZONES.filter(z=>z.d===d).sort((a,b)=>(zoneRank(a)??99)-(zoneRank(b)??99)).map(z=>`<div class="zrow"><span>${esc(z.n)} <span class="small">(${z.m2?fmt(z.m2)+' kr/m², '+z.antal+' handler':'ingen handler'}, ${z.autoRank?'forslag '+z.autoRank:'for få handler til et forslag'})</span></span><input type="number" min="1" max="10" data-z="${z.id}" value="${S.rank[z.id]||''}" placeholder="${z.autoRank??''}" aria-label="Rang for ${esc(z.n)}"></div>`).join('')).join('')}
  <p style="display:flex;gap:10px;justify-content:space-between;margin-top:18px"><button class="btn" data-reset>Nulstil antagelser</button><button class="btn" data-done style="background:var(--ink);color:#fff;border-color:var(--ink)">Gem og luk</button></p>`;
  dlg.showModal()});
 $('settings').addEventListener('input',e=>{const k=e.target.dataset.k,z=e.target.dataset.z;

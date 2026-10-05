@@ -27,7 +27,17 @@ jobs:
         run: |
           git config user.name "flipradar-bot"
           git config user.email "flipradar-bot@users.noreply.github.com"
-          git add data/listings.json data/sales.json
-          git commit -m "Opdaterede boligdata $(date -u +%Y-%m-%d_%H%M)" || exit 0
-          git pull --rebase
-          git push
+          mkdir -p /tmp/ny && cp data/listings.json data/sales.json /tmp/ny/
+          # De nye data vinder altid: hent nyeste version af projektet og læg filerne ovenpå
+          for i in 1 2 3; do
+            git fetch origin main
+            git reset --hard origin/main
+            mkdir -p data && cp /tmp/ny/listings.json /tmp/ny/sales.json data/
+            git add data/listings.json data/sales.json
+            if git diff --cached --quiet; then echo "Intet nyt at gemme"; exit 0; fi
+            git commit -m "Opdaterede boligdata $(date -u +%Y-%m-%d_%H%M)"
+            if git push origin HEAD:main; then exit 0; fi
+            echo "Kunne ikke gemme, prøver igen om 10 sek."
+            sleep 10
+          done
+          exit 1

@@ -125,6 +125,7 @@ dialog::backdrop{background:rgba(24,35,43,.45)}
   <button class="btn" id="dir" type="button" title="Skift retning">Lav → høj</button>
   <label class="chk"><input type="checkbox" id="proj">Kun projektboliger</label>
   <label class="chk"><input type="checkbox" id="budget">Kun inden for budget</label>
+  <label class="chk"><input type="checkbox" id="avok">Kun med min. avance</label>
   <label class="chk"><input type="checkbox" id="ude">Kun altan eller terrasse</label>
   <label class="chk"><input type="checkbox" id="fav">Kun favoritter</label>
   <label class="chk"><input type="checkbox" id="hjem" checked>Skjul hjemfaldspligt</label>
@@ -144,12 +145,17 @@ const HJEMFALD=/hjemfald/i;
 const FLIPWORDS=/kærlig hånd|renoveringsbehov|renoveringskrævende|dødsbo|potentiale|istandsæt|oprindelig stand|projektbolig|håndværksmæssigt anlagt|som beset|trænger til/i;
 
 /* ---------- Gemte data (pr. browser indtil synk er sat op) ---------- */
-const DEF={budget:5000000,minAvance:250000,koebPct:1.0,koebFast:25000,renoLet:4000,renoMellem:9000,renoTotal:16000,mdr:5,rente:5,maeglerPct:1.5,salgFast:40000,istandFaktor:1.05};
+const DEF={budget:4500000,minAvance:250000,skoedePct:0.6,skoedeFast:1850,advokat:9500,letKoekken:130000,letMaling:1000,letGulv:10000,letElVvs:1000,letNedbryd:10000,renoMellem:9000,renoTotal:16000,bufferPct:0,mdr:5,rente:4.25,salgFast:75000,skatPct:22};
+const SETTINGS_VER=2;
+function renoPoster(l,level){const s=S.settings;if(level==='Let')return[['Nyt køkken inkl. installering',s.letKoekken],['Tapet, spartel, filt og maling ('+fmt(s.letMaling)+' kr/m²)',s.letMaling*l.m2],['Slibning og lak af gulv',s.letGulv],['El og VVS ('+fmt(s.letElVvs)+' kr/m²)',s.letElVvs*l.m2],['Nedbrydning og bortskaffelse',s.letNedbryd]];
+ return[[level+' renovering ('+fmt(s['reno'+level])+' kr/m², foreløbigt skøn)',s['reno'+level]*l.m2]]}
+const renoSum=(l,level)=>renoPoster(l,level).reduce((a,[,v])=>a+v,0);
 const LS='flipradar.v1';
-let S={favs:{},meta:{},rank:{},snap:{},settings:{...DEF}};
-try{const s=JSON.parse(localStorage.getItem(LS));if(s)S={...S,...s,snap:s.snap||{},settings:{...DEF,...(s.settings||{})}}}catch(e){}
+let S={favs:{},meta:{},rank:{},snap:{},hjemf:{},settings:{...DEF}};
+const erHjemfald=l=>l.hjemfald||!!S.hjemf[l.id];
+try{const s=JSON.parse(localStorage.getItem(LS));if(s)S={...S,...s,snap:s.snap||{},hjemf:s.hjemf||{},settings:{...DEF,...(s.settings||{})}};if(S.sv!==SETTINGS_VER){S.settings={...DEF};S.sv=SETTINGS_VER}}catch(e){}
 function save(){try{localStorage.setItem(LS,JSON.stringify(S))}catch(e){}}
-const meta=id=>S.meta[id]||(S.meta[id]={level:'Mellem',status:'Ny',note:''});
+const meta=id=>S.meta[id]||(S.meta[id]={level:'Let',status:'Ny',note:''});
 const zoneRank=z=>z?(S.rank[z.id]||z.autoRank||null):null;
 const rankTxt=z=>zoneRank(z)??'–';
 const TJEK=0.4; /* mere end 40 % under markedet: tjek prisen */
@@ -164,15 +170,18 @@ const hexFor=r=>r==null?'#A3ADB2':r>=.15?'#2E8B57':r>=.05?'#8DB36B':r>-.05?'#A3A
 const datoTxt=s=>new Date(s).toLocaleDateString('da-DK',{day:'numeric',month:'short',year:'numeric'});
 
 /* ---------- Beregning ---------- */
-function calc(l,level){const s=S.settings,mk=l.marked||{};level=level||(S.meta[l.id]?.level)||'Mellem';
- const salgM2=mk.salgP75||(mk.niveau?mk.niveau*s.istandFaktor:null);
- const renoKr=l.m2*s['reno'+level],koebOmk=l.pris*s.koebPct/100+s.koebFast,hold=l.pris*s.rente/100/12*s.mdr+l.ejerudgift*s.mdr;
- const kontant=l.pris+koebOmk+renoKr+hold,budgetOK=kontant<=s.budget;
- if(!salgM2)return{renoKr,koebOmk,hold,kontant,budgetOK,salg:null,avance:null,maxPris:null};
- const salg=l.m2*salgM2,salgOmk=salg*s.maeglerPct/100+s.salgFast,avance=salg-salgOmk-kontant;
- const k=1+s.koebPct/100+s.rente/100/12*s.mdr,fast=s.koebFast+renoKr+l.ejerudgift*s.mdr;
+function calc(l,level){const s=S.settings,mk=l.marked||{};level=level||(S.meta[l.id]?.level)||'Let';
+ const salgM2=mk.naer5Snit||mk.niveau||null;
+ const r=s.rente/100/12*s.mdr,renoKr=renoSum(l,level),buffer=renoKr*s.bufferPct/100;
+ const skoede=s.skoedeFast+l.pris*s.skoedePct/100,koebOmk=skoede+s.advokat;
+ const kapital=l.pris+koebOmk+renoKr+buffer,renter=kapital*r,ejer=l.ejerudgift*s.mdr,hold=renter+ejer;
+ const kontant=kapital+hold,budgetOK=kontant<=s.budget;
+ const base={renoKr,buffer,skoede,koebOmk,renter,ejer,hold,kontant,budgetOK};
+ if(!salgM2)return{...base,salg:null,avance:null,maxPris:null};
+ const salg=l.m2*salgM2,salgOmk=s.salgFast,avance=salg-salgOmk-kontant,skat=Math.max(0,avance)*s.skatPct/100;
+ const k=(1+s.skoedePct/100)*(1+r),fast=(s.skoedeFast+s.advokat+renoKr+buffer)*(1+r)+ejer;
  const maxPris=Math.min((salg-salgOmk-fast-s.minAvance)/k,(s.budget-fast)/k);
- return{renoKr,salg,salgM2,salgBasis:mk.salgP75?'p75':'niveau',salgOmk,koebOmk,hold,kontant,avance,maxPris,budgetOK}}
+ return{...base,salg,salgM2,salgBasis:mk.naer5Snit?'naer5':'niveau',salgOmk,avance,skat,efterSkat:avance-skat,maxPris}}
 
 function gauge(r){if(r==null)return '<span class="gauge small">Ingen markedsdata</span>';
  const p=Math.max(-.3,Math.min(.3,r)),w=Math.abs(p)/.3*50,st=p>=0?`left:50%;width:${w}%`:`right:50%;width:${w}%`;
@@ -180,7 +189,7 @@ function gauge(r){if(r==null)return '<span class="gauge small">Ingen markedsdata
 function tags(l,c){const t=[],mk=l.marked||{};
  if(l.saerlig)t.push(`<span class="tag warn">Særlige vilkår: ${esc(l.saerlig)}</span>`);
  if(tjek(l))t.push('<span class="tag warn">Tjek prisen</span>');
- if(l.hjemfald)t.push('<span class="tag warn">Hjemfaldspligt</span>');
+ if(erHjemfald(l))t.push(`<span class="tag warn">Hjemfaldspligt${l.hjemfald?'':' (markeret af dig)'}</span>`);
  if(l.flag)t.push('<span class="tag">Projektbolig</span>');
  if(l.prisaendring<0)t.push(`<span class="tag">Sat ned ${fmt(-l.prisaendring)} %</span>`);
  if(l.liggetid>90)t.push(`<span class="tag plain">${l.liggetid} dage til salg</span>`);
@@ -200,9 +209,9 @@ $('sort').addEventListener('change',()=>{dir=DEFDIR[$('sort').value];setDirLabel
 $('dir').addEventListener('click',()=>{dir*=-1;setDirLabel();render()});
 $('filters').addEventListener('input',e=>{if(e.target.id!=='sort')render()});
 function filtered(){const q=$('q').value.trim().toLowerCase(),d=$('d').value,t=$('t').value,
- max=+$('max').value||Infinity,min=+$('min').value||0,proj=$('proj').checked,bud=$('budget').checked,fav=$('fav').checked,ude=$('ude').checked,saer=$('saer').checked,hjem=$('hjem').checked;
+ max=+$('max').value||Infinity,min=+$('min').value||0,proj=$('proj').checked,bud=$('budget').checked,fav=$('fav').checked,ude=$('ude').checked,saer=$('saer').checked,hjem=$('hjem').checked,avok=$('avok').checked;
  const arr=LISTINGS.filter(l=>(!d||l.distrikt===d)&&(!t||(t==='hus'?l.type!=='Ejerlejlighed':l.type===t))&&l.pris<=max&&l.m2>=min
-  &&(!proj||l.flag)&&(!fav||S.favs[l.id])&&(!ude||l.altan||l.terrasse)&&(saer||!l.saerlig)&&(!hjem||!l.hjemfald)&&(!bud||calc(l).budgetOK)
+  &&(!proj||l.flag)&&(!fav||S.favs[l.id])&&(!ude||l.altan||l.terrasse)&&(saer||!l.saerlig)&&(!hjem||!erHjemfald(l))&&(!bud||calc(l).budgetOK)&&(!avok||(calc(l).avance??-1)>=S.settings.minAvance)
   &&(!q||(l.adresse+' '+l.postnr+' '+l.by+' '+l.distrikt+' '+(Z[l.zone]?.n||'')).toLowerCase().includes(q)));
  const key={m2pris:l=>l.m2pris,pris:l=>l.pris,m2:l=>l.m2,rabat:l=>l.rabat,avance:l=>calc(l).avance,liggetid:l=>l.liggetid,rank:l=>zoneRank(Z[l.zone])}[$('sort').value];
  return arr.sort((a,b)=>{const ta=tjek(a)||!!a.saerlig,tb=tjek(b)||!!b.saerlig;if(ta!==tb)return ta?1:-1;const x=key(a),y=key(b);if(x==null&&y==null)return 0;if(x==null)return 1;if(y==null)return -1;return(x-y)*dir})}
@@ -256,10 +265,10 @@ function marketHTML(l){const mk=l.marked||{};
  <div><span>Aktuelle annoncer</span><b>${mk.udbudMedian?fmt(mk.udbudMedian):'–'}</b><span>${mk.udbudAntal} annoncer, justeret ${String(mk.afslag).replace('.',',')} %</span></div>
  <div><span>Markedsniveau</span><b>${fmt(mk.niveau)}</b><span>${pctSalg} % fra handler</span></div></div>
  <p class="small">Alle tal er kr/m². Kun almindelige frie handler af ${l.gruppe==='lejl'?'lejligheder':'huse'} i lignende størrelse indgår. Familiehandler og tvangsauktioner er sorteret fra. Udbudspriserne er justeret med det typiske afslag i området.</p>
- ${mk.solid?'':`<p class="small bad">Under ${META.regler?.minHandler||8} handler fra de seneste ${META.regler?.dage||120} dage tæt på. Området eller perioden er udvidet, så tallet er mindre sikkert.</p>`}
+ ${mk.solid?'':`<p class="small bad">Under ${META.regler?.minHandler||8} handler fra de seneste ${META.regler?.dage||120} dage tæt på. Området er udvidet, så tallet er mindre sikkert.</p>`}
  ${mk.handler?.length?`<div class="wrapx"><table class="comps"><thead><tr><th>Handel</th><th>Dato</th><th class="r">m²</th><th class="r">kr/m²</th><th class="r">Afstand</th></tr></thead><tbody>
  ${mk.handler.map(h=>`<tr><td>${esc(h.a)}</td><td>${datoTxt(h.d)}</td><td class="r">${h.m2}</td><td class="r">${fmt(h.kvm)}</td><td class="r">${fmt(h.afst)} m</td></tr>`).join('')}</tbody></table></div>`:''}`}
-function openDrawer(id,keep){const l=byId[id];if(!l)return;const z=Z[l.zone],m=S.meta[id]||{level:'Mellem',status:'Ny',note:''},c=calc(l,m.level),s=S.settings,f=!!S.favs[id];
+function openDrawer(id,keep){const l=byId[id];if(!l)return;const z=Z[l.zone],m=S.meta[id]||{level:'Let',status:'Ny',note:''},c=calc(l,m.level),s=S.settings,f=!!S.favs[id];
  sel=id;const dr=$('drawer');
  dr.innerHTML=`<div class="dhead"><div><h2>${esc(l.adresse)}</h2><div class="small">${l.postnr} ${esc(l.by)}${z?`, ${esc(z.n)} (områderang ${rankTxt(z)} af 10)`:''}</div></div>
  <div><button class="heart${f?' on':''}" data-dheart aria-label="${f?'Fjern fra favoritter':'Gem som favorit'}">${f?'♥':'♡'}</button> <button class="btn" data-close>Luk</button></div></div>
@@ -277,19 +286,26 @@ function openDrawer(id,keep){const l=byId[id];if(!l)return;const z=Z[l.zone],m=S
  <h3>Markedsniveau</h3>${marketHTML(l)}
  ${l.tidligereSalg?.length?`<h3>Tidligere salg af boligen</h3><table class="comps"><tbody>${l.tidligereSalg.map(t=>`<tr><td>${datoTxt(t.dato)}</td><td class="r">${kr(t.pris)}</td></tr>`).join('')}</tbody></table>`:''}
  <h3>Flip-beregning</h3><div class="calc">
- <div class="seg" role="group" aria-label="Renoveringsniveau">${['Let','Mellem','Total'].map(v=>`<button data-level="${v}" class="${m.level===v?'on':''}">${v} (${fmt(s['reno'+v])} kr/m²)</button>`).join('')}</div>
+ <div class="seg" role="group" aria-label="Renoveringsniveau">${['Let','Mellem','Total'].map(v=>`<button data-level="${v}" class="${m.level===v?'on':''}">${v} (${kr(renoSum(l,v))})</button>`).join('')}</div>
  ${c.salg==null?'<p class="small">Der er ikke markedsdata nok til at regne en salgspris ud.</p>':`<table>
  <tr><td>Købspris</td><td>${kr(l.pris)}</td></tr>
- <tr><td>Købsomkostninger</td><td>${kr(c.koebOmk)}</td></tr>
- <tr><td>Renovering</td><td>${kr(c.renoKr)}</td></tr>
- <tr><td>Renter og ejerudgift i ${s.mdr} mdr.</td><td>${kr(c.hold)}</td></tr>
+ <tr><td>Tinglysning af skøde (${kr(s.skoedeFast)} + ${String(s.skoedePct).replace('.',',')} %)</td><td>${kr(c.skoede)}</td></tr>
+ <tr><td>Advokat</td><td>${kr(s.advokat)}</td></tr>
+ <tr><td>Renovering, ${m.level.toLowerCase()}</td><td>${kr(c.renoKr)}</td></tr>
+ ${renoPoster(l,m.level).map(([t,v])=>`<tr class="small"><td>&nbsp;&nbsp;${esc(t)}</td><td>${kr(v)}</td></tr>`).join('')}
+ ${c.buffer?`<tr><td>Buffer, ${String(s.bufferPct).replace('.',',')} % af renovering</td><td>${kr(c.buffer)}</td></tr>`:''}
+ <tr><td>Renter, ${String(s.rente).replace('.',',')} % i ${s.mdr} mdr.</td><td>${kr(c.renter)}</td></tr>
+ <tr><td>Ejerudgift i ${s.mdr} mdr.</td><td>${kr(c.ejer)}</td></tr>
  <tr class="tot"><td>Samlet investering</td><td class="${c.budgetOK?'':'bad'}">${kr(c.kontant)}</td></tr>
  <tr><td>Forventet salgspris</td><td>${kr(c.salg)}</td></tr>
- <tr><td>Salgsomkostninger</td><td>−${kr(c.salgOmk)}</td></tr></table>
+ <tr><td>Salgsomkostninger (mægler m.m.)</td><td>−${kr(c.salgOmk)}</td></tr></table>
  <div class="big ${c.avance>=s.minAvance?'good':c.avance<0?'bad':''}">${c.avance<0?'−':''}${kr(Math.abs(c.avance))}</div>
- <div class="small">Forventet avance. Dit mål er mindst ${kr(s.minAvance)}, og budgettet er ${kr(s.budget)}.</div>
+ <div class="small">Forventet avance før skat. Dit mål er mindst ${kr(s.minAvance)}, og budgettet er ${kr(s.budget)}.</div>
+ ${c.avance>0?`<p>Efter ${String(s.skatPct).replace('.',',')} % selskabsskat: <b>${kr(c.efterSkat)}</b></p>`:''}
  <p><b>Max købspris: ${c.maxPris>0?kr(c.maxPris):'regnestykket holder ikke'}</b><br><span class="small">Den højeste pris, der stadig giver dit mindstemål i avance og holder dig inden for budgettet.</span></p>
- <p class="small">${c.salgBasis==='p75'?`Salgsprisen efter renovering er sat til ${fmt(c.salgM2)} kr/m², den øverste fjerdedel af de sammenlignelige handler, som skøn for en istandsat bolig.`:`Der er for få handler til at bruge den øverste fjerdedel, så salgsprisen er markedsniveauet × ${String(s.istandFaktor).replace('.',',')}.`}</p>`}</div>
+ ${c.salgBasis==='naer5'?`<p class="small">Salgsprisen er ${l.m2} m² × ${fmt(c.salgM2)} kr/m², gennemsnittet af de ${l.marked.naer5.length} nærmeste frie handler af lignende boliger fra de seneste ${l.marked.naer5Dage} dage:</p>${l.marked.naer5.length<5?`<p class="small bad">Der er kun fundet ${l.marked.naer5.length} lignende handler inden for 4 måneder, så salgsprisen er mere usikker.</p>`:''}
+ <div class="wrapx"><table class="comps"><thead><tr><th>Handel</th><th>Dato</th><th class="r">m²</th><th class="r">kr/m²</th><th class="r">Afstand</th></tr></thead><tbody>${l.marked.naer5.map(h=>`<tr><td>${esc(h.a)}</td><td>${datoTxt(h.d)}</td><td class="r">${h.m2}</td><td class="r">${fmt(h.kvm)}</td><td class="r">${fmt(h.afst)} m</td></tr>`).join('')}</tbody></table></div>`:'<p class="small">De 5 nærmeste handler er ikke hentet endnu, så salgsprisen er midlertidigt sat til markedsniveauet. Det retter sig ved næste dataopdatering.</p>'}`}</div>
+ <p>${l.hjemfald?'<span class="small">Annoncen nævner hjemfaldspligt.</span>':`<button class="btn" data-hjemf>${S.hjemf[l.id]?'Fjern markering af hjemfaldspligt':'Markér som hjemfaldspligt'}</button>`}</p>
  <h3>Mine noter</h3>
  <select data-status ${f?'':'disabled'}>${['Ny','Set','Fremvisning booket','Bud givet','Droppet'].map(v=>`<option ${m.status===v?'selected':''}>${v}</option>`).join('')}</select>
  <textarea data-note placeholder="${f?'Fx stand på tag, foreningens økonomi, idéer til planløsning':'Gem boligen som favorit for at skrive noter'}" ${f?'':'disabled'}>${esc(m.note)}</textarea>`;
@@ -298,15 +314,17 @@ function closeDrawer(){$('drawer').classList.remove('open');sel=null;render()}
 $('drawer').addEventListener('click',e=>{
  if(e.target.closest('[data-close]')){closeDrawer();return}
  if(e.target.closest('[data-dheart]')){toggleFav(sel);return}
+ if(e.target.closest('[data-hjemf]')){if(S.hjemf[sel])delete S.hjemf[sel];else S.hjemf[sel]=true;save();if(S.hjemf[sel]&&$('hjem').checked)closeDrawer();else{openDrawer(sel,true);render()}return}
  const lv=e.target.closest('[data-level]');if(lv){meta(sel).level=lv.dataset.level;save();openDrawer(sel,true);render()}});
 $('drawer').addEventListener('change',e=>{if(e.target.matches('[data-status]')){meta(sel).status=e.target.value;save();render()}});
 $('drawer').addEventListener('input',e=>{if(e.target.matches('[data-note]')){meta(sel).note=e.target.value;save()}});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('drawer').classList.contains('open'))closeDrawer()});
 
 /* ---------- Antagelser og områderang ---------- */
-const FIELDS=[['budget','Samlet budget (kr)'],['minAvance','Mindste avance (kr)'],['koebPct','Købsomkostninger (% af pris)'],['koebFast','Faste købsomkostninger (kr)'],
- ['renoLet','Let renovering (kr/m²)'],['renoMellem','Mellem renovering (kr/m²)'],['renoTotal','Totalrenovering (kr/m²)'],['mdr','Projektets varighed (mdr.)'],
- ['rente','Rente på finansiering (% p.a.)'],['maeglerPct','Mæglersalær (% af salgspris)'],['salgFast','Faste salgsomkostninger (kr)'],['istandFaktor','Istandsat ift. markedsniveau, ved få handler (faktor)']];
+const FIELDS=[['budget','Låneramme / budget (kr)'],['minAvance','Mindste avance før skat (kr)'],['skoedeFast','Tinglysning skøde, fast (kr)'],['skoedePct','Tinglysning skøde (% af pris)'],['advokat','Advokat ved køb (kr)'],
+ ['letKoekken','Let: nyt køkken inkl. installering (kr)'],['letMaling','Let: tapet, spartel, filt, maling (kr/m²)'],['letGulv','Let: slibning og lak af gulv (kr)'],['letElVvs','Let: el og VVS (kr/m²)'],['letNedbryd','Let: nedbrydning og bortskaffelse (kr)'],
+ ['renoMellem','Mellem renovering (kr/m², foreløbigt skøn)'],['renoTotal','Totalrenovering (kr/m², foreløbigt skøn)'],['bufferPct','Buffer til uforudsete udgifter (% af renovering)'],['mdr','Projektets varighed (mdr.)'],
+ ['rente','Rente på finansiering (% p.a.)'],['salgFast','Salgsomkostninger, mægler m.m. (kr)'],['skatPct','Selskabsskat (%)']];
 $('openSettings').addEventListener('click',()=>{const s=S.settings,dlg=$('settings');
  dlg.innerHTML=`<h2>Antagelser</h2><p class="small">Bruges i flip-beregningen for alle boliger.</p>
  <div class="grid2">${FIELDS.map(([k,t])=>`<label>${t}<input type="number" step="any" data-k="${k}" value="${s[k]}"></label>`).join('')}</div>

@@ -30,11 +30,10 @@ HEADERS = {
 # ---------- Indstillinger ----------
 MAX_PRICE = 10_000_000     # boliger til salg op til denne pris
 SALES_DAYS = 120           # handler fra de seneste 4 måneder
-FALLBACK_DAYS = 180        # bruges kun, hvis der er for få handler
+FALLBACK_DAYS = SALES_DAYS # udvid aldrig ud over 4 måneder
 MIN_COMPS = 8              # mindst så mange handler før tallet regnes som solidt
 # Søgetrin: (dage tilbage, radius i meter). Første trin med nok handler bruges.
-STEPS = [(SALES_DAYS, 500), (SALES_DAYS, 1000), (SALES_DAYS, 1500),
-         (FALLBACK_DAYS, 1500), (FALLBACK_DAYS, 2500)]
+STEPS = [(SALES_DAYS, 500), (SALES_DAYS, 1000), (SALES_DAYS, 1500), (SALES_DAYS, 2500)]
 LISTING_WEIGHT = 0.5       # en aktuel annonce vejer halvt så meget som en handel
 LISTING_WEIGHT_OLD = 0.25  # annoncer der har ligget over 90 dage vejer endnu mindre
 
@@ -368,6 +367,11 @@ def market_for(l, sales, listings, fallback_afslag):
     lo, hi = (0.7, 1.3) if g == "lejl" else (0.6, 1.5)
     cand = [(dist_m(l["lat"], l["lng"], s["lat"], s["lng"]), s)
             for s in sales if s["gruppe"] == g and lo * m2 <= s["m2"] <= hi * m2]
+    # Salgspris: gennemsnit af de 5 nærmeste lignende handler fra de seneste 4 måneder
+    # Kun de seneste 4 måneder; findes der færre end 5, bruges dem der er
+    pool, naer_dage = [(dd, s) for dd, s in cand if s["alder"] <= SALES_DAYS], SALES_DAYS
+    pool.sort(key=lambda x: x[0])
+    naer5 = pool[:5]
     sel, days, radius = [], STEPS[-1][0], STEPS[-1][1]
     for days, radius in STEPS:
         sel = [(dd, s) for dd, s in cand if dd <= radius and s["alder"] <= days]
@@ -412,6 +416,10 @@ def market_for(l, sales, listings, fallback_afslag):
         "udbudAntal": len(others),
         "afslag": round(afslag, 1),
         "vaegtSalg": round(w_sales / (w_sales + w_list), 2) if (w_sales + w_list) else None,
+        "naer5Snit": round(statistics.mean(s["m2pris"] for _, s in naer5)) if naer5 else None,
+        "naer5Dage": naer_dage,
+        "naer5": [{"a": s["adresse"], "d": s["dato"], "p": s["pris"], "m2": s["m2"],
+                   "kvm": s["m2pris"], "afst": round(dd)} for dd, s in naer5],
         "handler": [{"a": s["adresse"], "d": s["dato"], "p": s["pris"], "m2": s["m2"],
                      "kvm": s["m2pris"], "afst": round(dd)} for dd, s in sel[:10]],
     }

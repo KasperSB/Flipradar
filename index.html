@@ -40,6 +40,10 @@ button,input,select,textarea{font:inherit;color:inherit}
 .addr{font-weight:650}
 .price{font-weight:700;text-align:right;white-space:nowrap}
 .sub,.nums,.tags{grid-column:2/4}
+.nums.sale{font-size:13px;color:var(--muted)}
+.nums.sale b{color:var(--ink)}
+.nums.sale .good b{color:var(--good)}
+.nums.sale .bad b{color:var(--bad)}
 .sub{color:var(--muted);font-size:13px}
 .nums{display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:14px}
 .tags{display:flex;gap:6px;flex-wrap:wrap}
@@ -145,9 +149,9 @@ const HJEMFALD=/hjemfald/i;
 const FLIPWORDS=/kærlig hånd|renoveringsbehov|renoveringskrævende|dødsbo|potentiale|istandsæt|oprindelig stand|projektbolig|håndværksmæssigt anlagt|som beset|trænger til/i;
 
 /* ---------- Gemte data (pr. browser indtil synk er sat op) ---------- */
-const DEF={budget:4500000,minAvance:250000,skoedePct:0.6,skoedeFast:1850,advokat:9500,letKoekken:130000,letMaling:1000,letGulv:10000,letElVvs:1000,letNedbryd:10000,renoMellem:9000,renoTotal:16000,bufferPct:0,mdr:5,rente:4.25,salgFast:75000,skatPct:22};
-const SETTINGS_VER=2;
-function renoPoster(l,level){const s=S.settings;if(level==='Let')return[['Nyt køkken inkl. installering',s.letKoekken],['Tapet, spartel, filt og maling ('+fmt(s.letMaling)+' kr/m²)',s.letMaling*l.m2],['Slibning og lak af gulv',s.letGulv],['El og VVS ('+fmt(s.letElVvs)+' kr/m²)',s.letElVvs*l.m2],['Nedbrydning og bortskaffelse',s.letNedbryd]];
+const DEF={budget:4500000,minAvance:250000,skoedePct:0.6,skoedeFast:1850,advokat:9500,letKoekken:130000,letMaling:1000,letGulv:10000,letElVvs:1000,letLoft:800,letNedbryd:10000,renoMellem:9000,renoTotal:16000,bufferPct:10,mdr:5,rente:4.25,salgFast:75000,skatPct:22};
+const SETTINGS_VER=3;
+function renoPoster(l,level){const s=S.settings;if(level==='Let')return[['Nyt køkken inkl. installering',s.letKoekken],['Tapet, spartel, filt og maling ('+fmt(s.letMaling)+' kr/m²)',s.letMaling*l.m2],['Slibning og lak af gulv',s.letGulv],['El og VVS ('+fmt(s.letElVvs)+' kr/m²)',s.letElVvs*l.m2],['Nye lofter ('+fmt(s.letLoft)+' kr/m²)',s.letLoft*l.m2],['Nedbrydning og bortskaffelse',s.letNedbryd]];
  return[[level+' renovering ('+fmt(s['reno'+level])+' kr/m², foreløbigt skøn)',s['reno'+level]*l.m2]]}
 const renoSum=(l,level)=>renoPoster(l,level).reduce((a,[,v])=>a+v,0);
 const LS='flipradar.v1';
@@ -193,7 +197,6 @@ function tags(l,c){const t=[],mk=l.marked||{};
  if(l.flag)t.push('<span class="tag">Projektbolig</span>');
  if(l.prisaendring<0)t.push(`<span class="tag">Sat ned ${fmt(-l.prisaendring)} %</span>`);
  if(l.liggetid>90)t.push(`<span class="tag plain">${l.liggetid} dage til salg</span>`);
- if(c.avance!=null&&c.avance>=S.settings.minAvance)t.push(`<span class="tag">Avance ca. ${kr(c.avance)}</span>`);
  if(!c.budgetOK)t.push('<span class="tag warn">Over budget</span>');
  if(l.asbest)t.push('<span class="tag warn">Asbest i tag</span>');
  if(mk.niveau&&!mk.solid)t.push('<span class="tag plain">Få handler</span>');
@@ -242,6 +245,7 @@ function rowHTML(l){const z=Z[l.zone],c=calc(l),f=!!S.favs[l.id];
  <div class="addr">${esc(l.adresse)}</div><div class="price">${kr(l.pris)}</div>
  <div class="sub">${l.postnr} ${esc(l.by)}${z?', '+esc(z.n)+`<span class="rank" title="Områdets rang i ${esc(l.distrikt)} (1 er bedst)">${rankTxt(z)}</span>`:' '}${l.type}</div>
  <div class="nums"><span><b>${l.m2}</b> m²</span><span><b>${fmt(l.m2pris)}</b> kr/m²</span>${gauge(l.rabat)}</div>
+ ${c.salg!=null?`<div class="nums sale"><span>Salg ca. <b>${kr(c.salg)}</b></span><span><b>${fmt(c.salgM2)}</b> kr/m²</span><span class="${c.avance>=S.settings.minAvance?'good':c.avance<0?'bad':''}">Avance <b>${c.avance<0?'−':''}${kr(Math.abs(c.avance))}</b></span></div>`:''}
  <div class="tags">${tags(l,c)}</div></div>`}
 function goneHTML(){const gone=Object.keys(S.favs).filter(id=>!byId[id]);if(!gone.length)return '';
  return `<div class="empty"><b>Ikke længere til salg</b>${gone.map(id=>{const s=S.snap[id]||{};
@@ -297,7 +301,7 @@ function openDrawer(id,keep){const l=byId[id];if(!l)return;const z=Z[l.zone],m=S
  <tr><td>Renter, ${String(s.rente).replace('.',',')} % i ${s.mdr} mdr.</td><td>${kr(c.renter)}</td></tr>
  <tr><td>Ejerudgift i ${s.mdr} mdr.</td><td>${kr(c.ejer)}</td></tr>
  <tr class="tot"><td>Samlet investering</td><td class="${c.budgetOK?'':'bad'}">${kr(c.kontant)}</td></tr>
- <tr><td>Forventet salgspris</td><td>${kr(c.salg)}</td></tr>
+ <tr><td>Forventet salgspris (${l.m2} m² × ${fmt(c.salgM2)} kr/m²)</td><td>${kr(c.salg)}</td></tr>
  <tr><td>Salgsomkostninger (mægler m.m.)</td><td>−${kr(c.salgOmk)}</td></tr></table>
  <div class="big ${c.avance>=s.minAvance?'good':c.avance<0?'bad':''}">${c.avance<0?'−':''}${kr(Math.abs(c.avance))}</div>
  <div class="small">Forventet avance før skat. Dit mål er mindst ${kr(s.minAvance)}, og budgettet er ${kr(s.budget)}.</div>
@@ -322,7 +326,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('drawer').classLi
 
 /* ---------- Antagelser og områderang ---------- */
 const FIELDS=[['budget','Låneramme / budget (kr)'],['minAvance','Mindste avance før skat (kr)'],['skoedeFast','Tinglysning skøde, fast (kr)'],['skoedePct','Tinglysning skøde (% af pris)'],['advokat','Advokat ved køb (kr)'],
- ['letKoekken','Let: nyt køkken inkl. installering (kr)'],['letMaling','Let: tapet, spartel, filt, maling (kr/m²)'],['letGulv','Let: slibning og lak af gulv (kr)'],['letElVvs','Let: el og VVS (kr/m²)'],['letNedbryd','Let: nedbrydning og bortskaffelse (kr)'],
+ ['letKoekken','Let: nyt køkken inkl. installering (kr)'],['letMaling','Let: tapet, spartel, filt, maling (kr/m²)'],['letGulv','Let: slibning og lak af gulv (kr)'],['letElVvs','Let: el og VVS (kr/m²)'],['letLoft','Let: nye lofter (kr/m²)'],['letNedbryd','Let: nedbrydning og bortskaffelse (kr)'],
  ['renoMellem','Mellem renovering (kr/m², foreløbigt skøn)'],['renoTotal','Totalrenovering (kr/m², foreløbigt skøn)'],['bufferPct','Buffer til uforudsete udgifter (% af renovering)'],['mdr','Projektets varighed (mdr.)'],
  ['rente','Rente på finansiering (% p.a.)'],['salgFast','Salgsomkostninger, mægler m.m. (kr)'],['skatPct','Selskabsskat (%)']];
 $('openSettings').addEventListener('click',()=>{const s=S.settings,dlg=$('settings');

@@ -71,6 +71,8 @@ SPECIAL = re.compile(
     r"fritidsbolig|sommerhus|lejet grund|ikke godkendt til (?:hel[åa]rs)?beboelse|erhvervslejemål|"
     r"erhvervsejendom|byggegrund|grund til salg|tvangsauktion|auktion", re.I)
 
+LISTING_TYPES = "condo,terraced house,villa"  # boligtyper hos Boligsiden
+ZONE_GROUP = "lejl"                           # boligtype, som områderne rangeres efter
 TYPE_MAP = {"condo": "Ejerlejlighed", "terraced house": "Rækkehus", "villa": "Villa"}
 GROUP = {"Ejerlejlighed": "lejl", "Rækkehus": "hus", "Villa": "hus"}
 BOLIGA_GROUP = {3: "lejl", 9: "lejl", 1: "hus", 2: "hus"}
@@ -193,6 +195,7 @@ def parse_case(c):
         "m2pris": round(price / area),
         "vaer": c.get("numberOfRooms"),
         "etage": a.get("floor"),
+        "grund": c.get("lotArea") if typ != "Ejerlejlighed" else None,
         "byggeaar": c.get("yearBuilt"),
         "energi": (c.get("energyLabel") or "").upper() or None,
         "ejerudgift": c.get("monthlyExpense") or 0,
@@ -240,7 +243,7 @@ def fetch_listings(sales):
     """Henter boliger pr. postnummer. De mange små postnumre i K, V og på
     Frederiksberg tages fra Boligas handler, så vi kun spørger på numre, der findes."""
     log("Henter boliger fra Boligsiden ...")
-    types = "condo,terraced house,villa"
+    types = LISTING_TYPES
     small = {int(s["postnr"]) for s in sales if s.get("postnr") and 1000 <= int(s["postnr"]) < 2000}
     zips = sorted(small) + SINGLE_ZIPS
     log(f"  Spørger på {len(zips)} postnumre ({len(small)} små postnumre i K, V og Frederiksberg)")
@@ -426,7 +429,7 @@ def market_for(l, sales, listings, fallback_afslag):
 
 
 def zone_stats(sales):
-    recent = [s for s in sales if s["gruppe"] == "lejl" and s["alder"] <= SALES_DAYS]
+    recent = [s for s in sales if s["gruppe"] == ZONE_GROUP and s["alder"] <= SALES_DAYS]
     zones = []
     for zid, d, name, lat, lon in ZONES:
         vals = [s["m2pris"] for s in recent if s["zone"] == zid]

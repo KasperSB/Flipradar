@@ -15,25 +15,31 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Hent boliger og handler
+        continue-on-error: true
         run: python scripts/update.py
+      - name: Hent sommerhuse i Nordsjælland
+        continue-on-error: true
+        run: python scripts/update_ns.py
       - name: Gem de nye data
         run: |
           git config user.name "flipradar-bot"
           git config user.email "flipradar-bot@users.noreply.github.com"
-          mkdir -p /tmp/ny && cp data/listings.json data/sales.json /tmp/ny/
+          FILES="listings.json sales.json nordsjaelland.json sales_ns.json"
+          mkdir -p /tmp/ny
+          for f in $FILES; do [ -f "data/$f" ] && cp "data/$f" /tmp/ny/; done
           # De nye data vinder altid: hent nyeste version af projektet og læg filerne ovenpå
           for i in 1 2 3; do
             git fetch origin main
             git reset --hard origin/main
-            mkdir -p data && cp /tmp/ny/listings.json /tmp/ny/sales.json data/
-            git add data/listings.json data/sales.json
+            mkdir -p data
+            for f in $FILES; do [ -f "/tmp/ny/$f" ] && cp "/tmp/ny/$f" data/ && git add "data/$f"; done
             if git diff --cached --quiet; then echo "Intet nyt at gemme"; exit 0; fi
             git commit -m "Opdaterede boligdata $(date -u +%Y-%m-%d_%H%M)"
             if git push origin HEAD:main; then exit 0; fi

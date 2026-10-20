@@ -79,6 +79,7 @@ h3{font-size:15px;margin:22px 0 8px}
 .calc table{width:100%;border-collapse:collapse;font-size:14px}
 .calc td{padding:3px 0}
 .calc td:last-child{text-align:right}
+.calc td:last-child{white-space:nowrap;padding-left:10px}
 .calc tr.tot td{border-top:1px solid var(--line);font-weight:700;padding-top:8px}
 .seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;margin-bottom:10px}
 .seg button{flex:1;border:0;background:#fff;padding:6px;cursor:pointer}
@@ -111,7 +112,30 @@ dialog::backdrop{background:rgba(24,35,43,.45)}
 .mkt b{display:block;font-size:16px}
 .mkt span{font-size:12px;color:var(--muted)}
 .gone{opacity:.6}
+.tag.new{background:var(--ink);color:#fff;font-weight:600}
+.tag.fald{background:#FFF1C9;color:#6B5200}
+.newbar{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid #C9DED7;background:#F0F7F4;color:#24574A;padding:7px 20px;font-size:14px;cursor:pointer}
+.newbar b{color:var(--ink)}
+.newbar[hidden]{display:none}
+#ftog{display:none}
+.legend{position:absolute;left:10px;bottom:24px;z-index:1000;background:rgba(255,255,255,.95);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.7;box-shadow:0 2px 8px rgba(24,35,43,.12)}
+.legend i{display:inline-block;width:11px;height:11px;border-radius:50%;margin-right:6px;vertical-align:-1px;border:1.5px solid #fff}
+.legend i.ring{background:#fff;border:3px solid var(--ink);width:13px;height:13px}
+#map{position:relative}
+.nedb{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px;color:var(--muted);margin:8px 0 2px}
+.nedb input{width:110px;border:1px solid var(--line);border-radius:6px;padding:5px 7px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:9px 14px;border-radius:8px;font-size:14px;z-index:2000}
 @media (max-width:860px){
+ .top{padding:8px 12px;padding-top:calc(8px + env(safe-area-inset-top,0px));gap:8px}
+ .brand{font-size:19px}.count{display:none}.note,.newbar{padding-left:12px;padding-right:12px}
+ .filters{padding:8px 12px;gap:8px}
+ #ftog{display:inline-block;align-self:end}
+ .filters.collapsed>:not(.keep){display:none}
+ .filters.collapsed .keep input{width:100%}
+ .filters.collapsed label.keep{flex:1 1 140px}
+ .row{padding:10px 12px 10px 6px}
+ body.compact .top,body.compact .note,body.compact .newbar{display:none}
+ .legend{bottom:30px}
  .main{grid-template-columns:1fr}.viewtog{display:flex}
  .main.show-map .list{display:none}.main:not(.show-map) #map{display:none}
  .facts{grid-template-columns:1fr 1fr}.grid2{grid-template-columns:1fr}
@@ -128,17 +152,20 @@ dialog::backdrop{background:rgba(24,35,43,.45)}
   <button class="btn" id="openSettings">Antagelser og områder</button>
 </header>
 <div class="note" id="note">Henter data ...</div>
-<form class="filters" id="filters" onsubmit="return false">
-  <label>Søg<input id="q" placeholder="Vej, postnr. eller område"></label>
+<button type="button" class="newbar" id="newbar" hidden></button>
+<form class="filters collapsed" id="filters" onsubmit="return false">
+  <label class="keep">Søg<input id="q" placeholder="Vej, postnr. eller område"></label>
   <div class="msel"><span class="mlabel" id="dlabel">Bydel</span><button type="button" class="dd" id="dbtn" aria-haspopup="true" aria-expanded="false">Alle bydele</button><div class="mpanel" id="dpanel" hidden></div></div>
   <label>Boligtype<select id="t"><option value="">Alle</option><option>Ejerlejlighed</option><option value="hus">Rækkehus/villa</option></select></label>
   <label>Maks. pris<input id="max" type="number" step="100000" value="6000000"></label>
   <label>Min. m²<input id="min" type="number" step="5" value="0"></label>
-  <label>Sortér efter<select id="sort">
-    <option value="m2pris">m²-pris</option><option value="pris">Totalpris</option><option value="m2">Størrelse (m²)</option>
+  <label class="keep">Sortér efter<select id="sort">
+    <option value="m2pris">m²-pris</option><option value="nyeste">Nyeste først</option><option value="pris">Totalpris</option><option value="m2">Størrelse (m²)</option>
     <option value="rabat">Rabat ift. området</option><option value="avance">Forventet avance</option>
     <option value="liggetid">Liggetid</option><option value="rank">Områderang</option></select></label>
-  <button class="btn" id="dir" type="button" title="Skift retning">Lav → høj</button>
+  <button class="btn keep" id="dir" type="button" title="Skift retning">Lav → høj</button>
+  <button class="btn keep" id="ftog" type="button" aria-expanded="false">Filtre</button>
+  <label class="chk"><input type="checkbox" id="nye">Kun nye <span id="nyeN"></span></label>
   <label class="chk"><input type="checkbox" id="proj">Kun projektboliger</label>
   <label class="chk"><input type="checkbox" id="budget">Kun inden for budget</label>
   <label class="chk"><input type="checkbox" id="avok">Kun med min. avance</label>
@@ -161,24 +188,34 @@ const HJEMFALD=/hjemfald/i;
 const FLIPWORDS=/kærlig hånd|renoveringsbehov|renoveringskrævende|dødsbo|potentiale|istandsæt|oprindelig stand|projektbolig|håndværksmæssigt anlagt|som beset|trænger til/i;
 
 /* ---------- Gemte data (pr. browser indtil synk er sat op) ---------- */
-const DEF={budget:4500000,minAvance:250000,skoedePct:0.6,skoedeFast:1850,advokat:9500,letKoekken:130000,letMaling:1000,letGulv:10000,letElVvs:1000,letLoft:800,letNedbryd:10000,renoMellem:9000,renoTotal:16000,bufferPct:10,mdr:5,rente:4.25,salgFast:75000,skatPct:22};
+const DEF={budget:4500000,minAvance:250000,skoedePct:0.6,skoedeFast:1850,advokat:9500,letKoekken:130000,letMaling:1000,letGulv:10000,letElVvs:1000,letLoft:800,letNedbryd:10000,renoMellem:9000,renoTotal:16000,bufferPct:10,momsPct:25,mdr:5,rente:4.25,salgFast:75000,skatPct:22};
 const SETTINGS_VER=3;
+const URLP=new URLSearchParams(location.search);
 let MARKET='kbh';try{MARKET=localStorage.getItem('flipradar.market')==='ns'?'ns':'kbh'}catch(e){}
+if(URLP.get('m')==='ns'||URLP.get('m')==='kbh'){MARKET=URLP.get('m');try{localStorage.setItem('flipradar.market',MARKET)}catch(e){}}
 const NS=MARKET==='ns';
 const DEF_NS={...DEF,nsUdvendig:40000,nsRapport:18000};
 const DEFM=NS?DEF_NS:DEF;
-function renoPoster(l,level){const s=S.settings;if(level==='Let')return[['Nyt køkken inkl. installering',s.letKoekken],['Tapet, spartel, filt og maling ('+fmt(s.letMaling)+' kr/m²)',s.letMaling*l.m2],['Slibning og lak af gulv',s.letGulv],['El og VVS ('+fmt(s.letElVvs)+' kr/m²)',s.letElVvs*l.m2],['Nye lofter ('+fmt(s.letLoft)+' kr/m²)',s.letLoft*l.m2],['Nedbrydning og bortskaffelse',s.letNedbryd]].concat(s.nsUdvendig!=null?[['Udvendig maling og træbeskyttelse',s.nsUdvendig]]:[]);
+function renoPoster(l,level){const s=S.settings;if(level==='Let')return[['Nyt køkken inkl. installering',s.letKoekken],['Tapet, spartel, filt og maling ('+fmt(s.letMaling)+' kr/m²)',s.letMaling*l.m2],['Slibning og lak af gulv',s.letGulv],['El og VVS ('+fmt(s.letElVvs)+' kr/m²)',s.letElVvs*l.m2],['Nye lofter ('+fmt(s.letLoft)+' kr/m²)',s.letLoft*l.m2],['Nedbrydning og bortskaffelse'+(S.meta[l.id]?.nedbryd!=null?' (rettet for denne bolig)':''),S.meta[l.id]?.nedbryd??s.letNedbryd]].concat(s.nsUdvendig!=null?[['Udvendig maling og træbeskyttelse',s.nsUdvendig]]:[]);
  return[[level+' renovering ('+fmt(s['reno'+level])+' kr/m², foreløbigt skøn)',s['reno'+level]*l.m2]]}
-const renoSum=(l,level)=>renoPoster(l,level).reduce((a,[,v])=>a+v,0);
+const renoSumEx=(l,level)=>renoPoster(l,level).reduce((a,[,v])=>a+v,0);
+const momsF=()=>1+(S.settings.momsPct||0)/100;
+const renoSum=(l,level)=>renoSumEx(l,level)*momsF();
 const LS='flipradar.v1';
-let S={favs:{},meta:{},rank:{},snap:{},hjemf:{},settings:{...DEF}};
+let S={favs:{},meta:{},rank:{},snap:{},hjemf:{},first:{},settings:{...DEF}};
 const erHjemfald=l=>l.hjemfald||!!S.hjemf[l.id];
-try{const s=JSON.parse(localStorage.getItem(LS));if(s)S={...S,...s,snap:s.snap||{},hjemf:s.hjemf||{},settings:{...DEF,...(s.settings||{})}};if(S.sv!==SETTINGS_VER){S.settings={...DEF};S.sv=SETTINGS_VER}if(!S.mv){Object.values(S.meta||{}).forEach(m=>m.level='Let');S.mv=1}}catch(e){}
+try{const s=JSON.parse(localStorage.getItem(LS));if(s)S={...S,...s,snap:s.snap||{},hjemf:s.hjemf||{},first:s.first||{},settings:{...DEF,...(s.settings||{})}};if(S.sv!==SETTINGS_VER){S.settings={...DEF};S.sv=SETTINGS_VER}if(!S.mv){Object.values(S.meta||{}).forEach(m=>m.level='Let');S.mv=1}}catch(e){}
 if(NS){S._kbh=S.settings;S.settings={...DEF_NS,...(S.settingsNS||{})}}
 function save(){const o={...S};if(NS){o.settingsNS=S.settings;o.settings=S._kbh;delete o._kbh}try{localStorage.setItem(LS,JSON.stringify(o))}catch(e){}}
 const meta=id=>S.meta[id]||(S.meta[id]={level:'Let',status:'Ny',note:''});
 const zoneRank=z=>z?(S.rank[z.id]||z.autoRank||null):null;
 const rankTxt=z=>zoneRank(z)??'–';
+const NOW=Date.now(),NYT_TIMER=24;
+const FIRST=S.first[MARKET]||(S.first[MARKET]={});
+const isNy=l=>FIRST[l.id]>0&&(NOW-FIRST[l.id])/36e5<NYT_TIMER;
+const prisfald=l=>{const sn=S.snap[l.id];return S.favs[l.id]&&sn&&sn.pris&&l.pris<sn.pris?sn.pris-l.pris:0};
+const faldNy=l=>{const sn=S.snap[l.id];return prisfald(l)>0&&l.pris<(sn.ack??sn.pris)};
+const erNy=l=>isNy(l)||faldNy(l);
 const TJEK=0.4; /* mere end 40 % under markedet: tjek prisen */
 const tjek=l=>l.rabat!=null&&l.rabat>TJEK;
 
@@ -187,27 +224,30 @@ const $=id=>document.getElementById(id);
 const fmt=n=>Math.round(n).toLocaleString('da-DK'),kr=n=>fmt(n)+' kr';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const colorFor=r=>r==null?'var(--neutral)':r>=.15?'var(--good)':r>=.05?'var(--ok)':r>-.05?'var(--neutral)':'var(--bad)';
+const avHex=l=>{const a=calc(l).avance;return a==null?'#A3ADB2':a>=S.settings.minAvance?'#2E8B57':a>=0?'#E0A800':'#C2493D'};
 const hexFor=r=>r==null?'#A3ADB2':r>=.15?'#2E8B57':r>=.05?'#8DB36B':r>-.05?'#A3ADB2':'#C2493D';
 const datoTxt=s=>new Date(s).toLocaleDateString('da-DK',{day:'numeric',month:'short',year:'numeric'});
 
 /* ---------- Beregning ---------- */
 function calc(l,level){const s=S.settings,mk=l.marked||{};level=level||(S.meta[l.id]?.level)||'Let';
  const salgM2=mk.naer5Snit||mk.niveau||null;
- const r=s.rente/100/12*s.mdr,renoKr=renoSum(l,level),buffer=renoKr*s.bufferPct/100;
+ const r=s.rente/100/12*s.mdr,renoEx=renoSumEx(l,level),renoKr=renoSum(l,level),renoMoms=renoKr-renoEx,buffer=renoKr*s.bufferPct/100;
  const skoede=s.skoedeFast+l.pris*s.skoedePct/100,koebOmk=skoede+s.advokat;
  const kapital=l.pris+koebOmk+renoKr+buffer,renter=kapital*r,ejer=l.ejerudgift*s.mdr,hold=renter+ejer;
  const kontant=kapital+hold,budgetOK=kontant<=s.budget;
- const base={renoKr,buffer,skoede,koebOmk,renter,ejer,hold,kontant,budgetOK};
+ const base={renoKr,renoEx,renoMoms,buffer,skoede,koebOmk,renter,ejer,hold,kontant,budgetOK};
  if(!salgM2)return{...base,salg:null,avance:null,maxPris:null};
- const salg=l.m2*salgM2,salgOmk=s.salgFast+(s.nsRapport||0),avance=salg-salgOmk-kontant,skat=Math.max(0,avance)*s.skatPct/100;
+ const salg=l.m2*salgM2,salgOmk=s.salgFast+(s.nsRapport||0),avance=salg-salgOmk-kontant;
  const k=(1+s.skoedePct/100)*(1+r),fast=(s.skoedeFast+s.advokat+renoKr+buffer)*(1+r)+ejer;
  const maxPris=Math.min((salg-salgOmk-fast-s.minAvance)/k,(s.budget-fast)/k);
- return{...base,salg,salgM2,salgBasis:mk.naer5Snit?'naer5':'niveau',salgOmk,avance,skat,efterSkat:avance-skat,maxPris}}
+ return{...base,salg,salgM2,salgBasis:mk.naer5Snit?'naer5':'niveau',salgOmk,avance,maxPris}}
 
 function gauge(r){if(r==null)return '<span class="gauge small">Ingen markedsdata</span>';
  const p=Math.max(-.3,Math.min(.3,r)),w=Math.abs(p)/.3*50,st=p>=0?`left:50%;width:${w}%`:`right:50%;width:${w}%`;
  return `<span class="gauge" title="m²-pris sammenlignet med markedsniveauet"><span class="gbar"><span class="gfill" style="${st};background:${colorFor(r)}"></span></span>${r>=0?fmt(r*100)+' % under':fmt(-r*100)+' % over'} marked</span>`}
 function tags(l,c){const t=[],mk=l.marked||{};
+ if(isNy(l))t.push('<span class="tag new">Ny</span>');
+ if(prisfald(l))t.push(`<span class="tag fald">${faldNy(l)?'Nyt prisfald: ':''}sat ned ${kr(prisfald(l))} siden du gemte den</span>`);
  if(l.saerlig)t.push(`<span class="tag warn">Særlige vilkår: ${esc(l.saerlig)}</span>`);
  if(tjek(l))t.push('<span class="tag warn">Tjek prisen</span>');
  if(erHjemfald(l))t.push(`<span class="tag warn">Hjemfaldspligt${l.hjemfald?'':' (markeret af dig)'}</span>`);
@@ -222,18 +262,18 @@ function tags(l,c){const t=[],mk=l.marked||{};
  return t.join('')}
 
 /* ---------- Filtre ---------- */
-const DEFDIR={m2pris:1,pris:1,m2:-1,rabat:-1,avance:-1,liggetid:-1,rank:1};
+const DEFDIR={nyeste:1,m2pris:1,pris:1,m2:-1,rabat:-1,avance:-1,liggetid:-1,rank:1};
 let dir=1,sel=null;
 function setDirLabel(){$('dir').textContent=dir===1?'Lav → høj':'Høj → lav'}
 $('sort').addEventListener('change',()=>{dir=DEFDIR[$('sort').value];setDirLabel();render()});
 $('dir').addEventListener('click',()=>{dir*=-1;setDirLabel();render()});
 $('filters').addEventListener('input',e=>{if(e.target.id!=='sort')render()});
-function filtered(){const q=$('q').value.trim().toLowerCase(),t=$('t').value,
+function filtered(o={}){const nye=!o.alleNye&&$('nye').checked,q=$('q').value.trim().toLowerCase(),t=$('t').value,
  max=+$('max').value||Infinity,min=+$('min').value||0,proj=$('proj').checked,bud=$('budget').checked,fav=$('fav').checked,ude=$('ude').checked,saer=$('saer').checked,hjem=$('hjem').checked,avok=$('avok').checked;
- const arr=LISTINGS.filter(l=>(!SELD.size||SELD.has(l.distrikt))&&(!t||(t==='hus'?l.type!=='Ejerlejlighed':l.type===t))&&l.pris<=max&&l.m2>=min
+ const arr=LISTINGS.filter(l=>(!nye||erNy(l))&&(!SELD.size||SELD.has(l.distrikt))&&(!t||(t==='hus'?l.type!=='Ejerlejlighed':l.type===t))&&l.pris<=max&&l.m2>=min
   &&(!proj||l.flag)&&(!fav||S.favs[l.id])&&(!ude||l.altan||l.terrasse)&&(saer||!l.saerlig)&&(!hjem||!erHjemfald(l))&&(!bud||calc(l).budgetOK)&&(!avok||(calc(l).avance??-1)>=S.settings.minAvance)
   &&(!q||(l.adresse+' '+l.postnr+' '+l.by+' '+l.distrikt+' '+(Z[l.zone]?.n||'')).toLowerCase().includes(q)));
- const key={m2pris:l=>l.m2pris,pris:l=>l.pris,m2:l=>l.m2,rabat:l=>l.rabat,avance:l=>calc(l).avance,liggetid:l=>l.liggetid,rank:l=>zoneRank(Z[l.zone])}[$('sort').value];
+ const key={nyeste:l=>(erNy(l)?-1e6:0)+l.liggetid,m2pris:l=>l.m2pris,pris:l=>l.pris,m2:l=>l.m2,rabat:l=>l.rabat,avance:l=>calc(l).avance,liggetid:l=>l.liggetid,rank:l=>zoneRank(Z[l.zone])}[$('sort').value];
  return arr.sort((a,b)=>{const ta=tjek(a)||!!a.saerlig,tb=tjek(b)||!!b.saerlig;if(ta!==tb)return ta?1:-1;const x=key(a),y=key(b);if(x==null&&y==null)return 0;if(x==null)return 1;if(y==null)return -1;return(x-y)*dir})}
 
 /* ---------- Kort ---------- */
@@ -250,9 +290,11 @@ function drawZones(){zoneLayer.clearLayers();const full=map.getZoom()>=14;ZONES.
 map.on('zoomend',drawZones);
 L.control.layers({'Gadekort':esri,'Lyst kort':esriGray,'Luftfoto':esriFoto,'OpenStreetMap':osm},{'Områder og rang':zoneLayer}).addTo(map);
 function drawMarkers(arr){markers.clearLayers();arr.forEach(l=>{
- const m=S.favs[l.id]?L.marker([l.lat,l.lng],{icon:L.divIcon({className:'',iconSize:[22,22],iconAnchor:[11,11],html:'<span class="mk-heart">♥</span>'})})
-  :L.circleMarker([l.lat,l.lng],{radius:l.id===sel?10:7,color:'#fff',weight:2,fillColor:hexFor(l.rabat),fillOpacity:.95});
- m.bindTooltip(`${esc(l.adresse)}<br>${kr(l.pris)}, ${l.m2} m², ${fmt(l.m2pris)} kr/m²`);
+ const ny=erNy(l),c=calc(l);
+ const m=S.favs[l.id]?L.marker([l.lat,l.lng],{zIndexOffset:ny?1000:0,icon:L.divIcon({className:'',iconSize:[22,22],iconAnchor:[11,11],html:`<span class="mk-heart" style="${ny?'text-shadow:0 0 0 #fff,0 0 4px #18232B,0 0 4px #18232B':''}">♥</span>`})})
+  :L.circleMarker([l.lat,l.lng],{radius:l.id===sel?11:ny?10:7,color:ny?'#18232B':'#fff',weight:ny?3:2,fillColor:avHex(l),fillOpacity:.95});
+ if(ny&&m.bringToFront)setTimeout(()=>m.bringToFront&&m.bringToFront(),0);
+ m.bindTooltip(`${ny?'<b>Ny</b> ':''}${esc(l.adresse)}<br>${kr(l.pris)}, ${l.m2} m²${c.avance!=null?'<br>Avance '+(c.avance<0?'−':'')+kr(Math.abs(c.avance)):''}`);
  m.on('click',()=>openDrawer(l.id));m.addTo(markers)})}
 
 /* ---------- Liste ---------- */
@@ -268,10 +310,16 @@ function goneHTML(){const gone=Object.keys(S.favs).filter(id=>!byId[id]);if(!gon
  return `<div class="empty"><b>Ikke længere til salg</b>${gone.map(id=>{const s=S.snap[id]||{};
   return `<div class="zrow gone"><span>${esc(s.adresse||'Ukendt adresse')}${s.pris?', '+kr(s.pris):''}${S.meta[id]?.note?'<br><span class="small">'+esc(S.meta[id].note)+'</span>':''}</span><button class="btn" data-forget="${esc(id)}">Fjern</button></div>`}).join('')}</div>`}
 function render(){const arr=filtered();
+ const nyAlle=filtered({alleNye:true}).filter(erNy),nyOk=nyAlle.filter(l=>(calc(l).avance??-1)>=S.settings.minAvance).length,fald=nyAlle.filter(faldNy).length;
+ $('nyeN').textContent=`(${nyAlle.length})`;
+ const nb=$('newbar');nb.hidden=!nyAlle.length;
+ const nn=nyAlle.length-fald,dele=[];if(nn)dele.push(`<b>${nn} ${nn===1?'ny bolig':'nye boliger'}</b> det seneste døgn${nyOk?`, heraf <b>${nyOk}</b> med min. avance`:''}`);if(fald)dele.push(`<b>${fald}</b> ${fald===1?'prisfald':'prisfald'} på favoritter`);
+ nb.innerHTML=$('nye').checked?`Viser kun nye og prisfald. <b>Tryk for at se alle boliger igen.</b>`:dele.join(' og ').replace(/^./,c=>c.toUpperCase())+'. Tryk for kun at se dem.';
+ updFtog();
  $('count').textContent=`${arr.length} af ${LISTINGS.length} boliger, ${Object.keys(S.favs).length} favoritter`;
- $('list').innerHTML=(arr.length?arr.map(rowHTML).join(''):'<div class="empty">Ingen boliger matcher filtrene. Prøv at hæve maks. prisen eller vælge alle bydele.</div>')+($('fav').checked?goneHTML():'');
+ $('list').innerHTML=(arr.length?arr.map(rowHTML).join(''):`<div class="empty">${$('nye').checked?'Ingen nye boliger lige nu.':'Ingen boliger matcher filtrene. Prøv at hæve maks. prisen eller vælge alle bydele.'}</div>`)+($('fav').checked?goneHTML():'');
  drawMarkers(arr)}
-function toggleFav(id){if(S.favs[id])delete S.favs[id];else{S.favs[id]=true;meta(id);const l=byId[id];if(l)S.snap[id]={adresse:l.adresse,pris:l.pris,url:l.url}}save();render();if(sel===id)openDrawer(id,true)}
+function toggleFav(id){if(S.favs[id])delete S.favs[id];else{S.favs[id]=true;meta(id);const l=byId[id];if(l)S.snap[id]={adresse:l.adresse,pris:l.pris,ack:l.pris,url:l.url}}save();render();if(sel===id)openDrawer(id,true)}
 $('list').addEventListener('click',e=>{const h=e.target.closest('[data-heart]');if(h){e.stopPropagation();toggleFav(h.dataset.heart);return}
  const g=e.target.closest('[data-forget]');if(g){delete S.favs[g.dataset.forget];save();render();return}
  const r=e.target.closest('.row');if(r)openDrawer(r.dataset.id)});
@@ -289,10 +337,11 @@ function marketHTML(l){const mk=l.marked||{};
  ${mk.solid?'':`<p class="small bad">Under ${META.regler?.minHandler||8} handler fra de seneste ${META.regler?.dage||120} dage tæt på. Området er udvidet, så tallet er mindre sikkert.</p>`}
  ${mk.handler?.length?`<div class="wrapx"><table class="comps"><thead><tr><th>Handel</th><th>Dato</th><th class="r">m²</th><th class="r">kr/m²</th><th class="r">Afstand</th></tr></thead><tbody>
  ${mk.handler.map(h=>`<tr><td>${esc(h.a)}</td><td>${datoTxt(h.d)}</td><td class="r">${h.m2}</td><td class="r">${fmt(h.kvm)}</td><td class="r">${fmt(h.afst)} m</td></tr>`).join('')}</tbody></table></div>`:''}`}
-function openDrawer(id,keep){const l=byId[id];if(!l)return;const z=Z[l.zone],m=S.meta[id]||{level:'Let',status:'Ny',note:''},c=calc(l,m.level),s=S.settings,f=!!S.favs[id];
+function openDrawer(id,keep){const l=byId[id];if(!l)return;
+ if(!keep){let ch=false;if(isNy(l)){FIRST[id]=1;ch=true}const sn=S.snap[id];if(sn&&S.favs[id]&&sn.ack!==l.pris&&l.pris<(sn.ack??sn.pris)){sn.ack=l.pris;ch=true}if(ch)save()}const z=Z[l.zone],m=S.meta[id]||{level:'Let',status:'Ny',note:''},c=calc(l,m.level),s=S.settings,f=!!S.favs[id];
  sel=id;const dr=$('drawer');
  dr.innerHTML=`<div class="dhead"><div><h2>${esc(l.adresse)}</h2><div class="small">${l.postnr} ${esc(l.by)}${z?`, ${esc(z.n)} (områderang ${rankTxt(z)} af 10)`:''}</div></div>
- <div><button class="heart${f?' on':''}" data-dheart aria-label="${f?'Fjern fra favoritter':'Gem som favorit'}">${f?'♥':'♡'}</button> <button class="btn" data-close>Luk</button></div></div>
+ <div><button class="btn" data-share>Del</button> <button class="heart${f?' on':''}" data-dheart aria-label="${f?'Fjern fra favoritter':'Gem som favorit'}">${f?'♥':'♡'}</button> <button class="btn" data-close>Luk</button></div></div>
  ${l.billede?`<img class="photo" src="${esc(l.billede)}" alt="" loading="lazy">`:''}
  <dl class="facts">
  <div><dt>Pris</dt><dd>${kr(l.pris)}</dd></div><div><dt>Størrelse</dt><dd>${l.m2} m²${l.vaer?', '+l.vaer+' vær.':''}</dd></div><div><dt>m²-pris</dt><dd>${fmt(l.m2pris)} kr</dd></div>
@@ -306,17 +355,18 @@ function openDrawer(id,keep){const l=byId[id];if(!l)return;const z=Z[l.zone],m=S
  <tr><td>Købspris</td><td>${kr(l.pris)}</td></tr>
  <tr><td>Tinglysning af skøde (${kr(s.skoedeFast)} + ${String(s.skoedePct).replace('.',',')} %)</td><td>${kr(c.skoede)}</td></tr>
  <tr><td>Advokat</td><td>${kr(s.advokat)}</td></tr>
- <tr><td>Renovering, ${m.level.toLowerCase()}</td><td>${kr(c.renoKr)}</td></tr>
- ${renoPoster(l,m.level).map(([t,v])=>`<tr class="small"><td>&nbsp;&nbsp;${esc(t)}</td><td>${kr(v)}</td></tr>`).join('')}
- <tr><td>Buffer til uforudsete udgifter, ${String(s.bufferPct).replace('.',',')} % af renovering</td><td>${kr(c.buffer)}</td></tr>
+ <tr><td>Renovering, ${m.level.toLowerCase()}, inkl. moms</td><td>${kr(c.renoKr)}</td></tr>
+ ${renoPoster(l,m.level).map(([t,v])=>`<tr class="small"><td>&nbsp;&nbsp;${esc(t)}</td><td>${kr(v*momsF())}</td></tr>`).join('')}
+ <tr class="small"><td>&nbsp;&nbsp;Heraf moms ${String(s.momsPct).replace('.',',')} %</td><td>${kr(c.renoMoms)}</td></tr>
+ <tr><td>Buffer til uforudsete udgifter, ${String(s.bufferPct).replace('.',',')} % af renovering inkl. moms</td><td>${kr(c.buffer)}</td></tr>
  <tr><td>Renter, ${String(s.rente).replace('.',',')} % i ${s.mdr} mdr.</td><td>${kr(c.renter)}</td></tr>
  <tr><td>Ejerudgift i ${s.mdr} mdr.</td><td>${kr(c.ejer)}</td></tr>
+ </table>${m.level==='Let'?`<div class="nedb"><label for="nedbIn">Nedbrydning for denne bolig (kr ekskl. moms)</label><input id="nedbIn" type="number" step="1000" data-nedb value="${S.meta[l.id]?.nedbryd??s.letNedbryd}">${S.meta[l.id]?.nedbryd!=null?'<button class="btn" data-nedbreset>Brug standard</button>':''}</div>`:''}<table>
  <tr class="tot"><td>Samlet investering</td><td class="${c.budgetOK?'':'bad'}">${kr(c.kontant)}</td></tr>
  <tr><td>Forventet salgspris (${l.m2} m² × ${fmt(c.salgM2)} kr/m²)</td><td>${kr(c.salg)}</td></tr>
  <tr><td>Salgsomkostninger (mægler m.m.)</td><td>−${kr(s.salgFast)}</td></tr>${s.nsRapport?`<tr><td>Tilstands- og elrapport ved salg</td><td>−${kr(s.nsRapport)}</td></tr>`:''}</table>
  <div class="big ${c.avance>=s.minAvance?'good':c.avance<0?'bad':''}">${c.avance<0?'−':''}${kr(Math.abs(c.avance))}</div>
- <div class="small">Forventet avance før skat. Dit mål er mindst ${kr(s.minAvance)}, og budgettet er ${kr(s.budget)}.</div>
- ${c.avance>0?`<p>Efter ${String(s.skatPct).replace('.',',')} % selskabsskat: <b>${kr(c.efterSkat)}</b></p>`:''}
+ <div class="small">Forventet avance. Dit mål er mindst ${kr(s.minAvance)}, og budgettet er ${kr(s.budget)}.</div>
  <p><b>Max købspris: ${c.maxPris>0?kr(c.maxPris):'regnestykket holder ikke'}</b><br><span class="small">Den højeste pris, der stadig giver dit mindstemål i avance og holder dig inden for budgettet.</span></p>
  ${c.salgBasis==='naer5'?`<p class="small">Salgsprisen er ${l.m2} m² × ${fmt(c.salgM2)} kr/m², gennemsnittet af de ${l.marked.naer5.length} nærmeste frie handler af lignende boliger fra de seneste ${l.marked.naer5Dage} dage:</p>${l.marked.naer5.length<5?`<p class="small bad">Der er kun fundet ${l.marked.naer5.length} lignende handler inden for 4 måneder, så salgsprisen er mere usikker.</p>`:''}
  <div class="wrapx"><table class="comps"><thead><tr><th>Handel</th><th>Dato</th><th class="r">m²</th><th class="r">kr/m²</th><th class="r">Afstand</th></tr></thead><tbody>${l.marked.naer5.map(h=>`<tr><td>${esc(h.a)}</td><td>${datoTxt(h.d)}</td><td class="r">${h.m2}</td><td class="r">${fmt(h.kvm)}</td><td class="r">${fmt(h.afst)} m</td></tr>`).join('')}</tbody></table></div>`:'<p class="small">De 5 nærmeste handler er ikke hentet endnu, så salgsprisen er midlertidigt sat til markedsniveauet. Det retter sig ved næste dataopdatering.</p>'}`}</div>
@@ -331,21 +381,29 @@ function openDrawer(id,keep){const l=byId[id];if(!l)return;const z=Z[l.zone],m=S
  <select data-status ${f?'':'disabled'}>${['Ny','Set','Fremvisning booket','Bud givet','Droppet'].map(v=>`<option ${m.status===v?'selected':''}>${v}</option>`).join('')}</select>
  <textarea data-note placeholder="${f?'Fx stand på tag, foreningens økonomi, idéer til planløsning':'Gem boligen som favorit for at skrive noter'}" ${f?'':'disabled'}>${esc(m.note)}</textarea>`;
  dr.classList.add('open');if(!keep){render();map.panTo([l.lat,l.lng])}}
-function closeDrawer(){$('drawer').classList.remove('open');sel=null;render()}
+function closeDrawer(){$('drawer').classList.remove('open');sel=null;if(URLP.get('b')){URLP.delete('b');URLP.delete('m');history.replaceState(null,'',location.pathname)}render()}
+function toast(t){const d=document.createElement('div');d.className='toast';d.textContent=t;document.body.appendChild(d);setTimeout(()=>d.remove(),2500)}
+function shareBolig(id){const l=byId[id];if(!l)return;const url=location.origin+location.pathname+`?m=${MARKET}&b=${encodeURIComponent(id)}`;const c=calc(l);
+ const txt=`${l.adresse}, ${l.postnr} ${l.by}: ${kr(l.pris)}, ${l.m2} m²${c.avance!=null?', forventet avance '+kr(c.avance):''}`;
+ if(navigator.share){navigator.share({title:'Flipradar: '+l.adresse,text:txt,url}).catch(()=>{});return}
+ (navigator.clipboard?navigator.clipboard.writeText(url):Promise.reject()).then(()=>toast('Link kopieret')).catch(()=>{prompt('Kopiér linket',url)})}
 $('drawer').addEventListener('click',e=>{
  if(e.target.closest('[data-close]')){closeDrawer();return}
  if(e.target.closest('[data-dheart]')){toggleFav(sel);return}
+ if(e.target.closest('[data-share]')){shareBolig(sel);return}
+ if(e.target.closest('[data-nedbreset]')){delete meta(sel).nedbryd;save();openDrawer(sel,true);render();return}
  if(e.target.closest('[data-hjemf]')){if(S.hjemf[sel])delete S.hjemf[sel];else S.hjemf[sel]=true;save();if(S.hjemf[sel]&&$('hjem').checked)closeDrawer();else{openDrawer(sel,true);render()}return}
  const lv=e.target.closest('[data-level]');if(lv){meta(sel).level=lv.dataset.level;save();openDrawer(sel,true);render()}});
-$('drawer').addEventListener('change',e=>{if(e.target.matches('[data-status]')){meta(sel).status=e.target.value;save();render()}});
+$('drawer').addEventListener('change',e=>{if(e.target.matches('[data-status]')){meta(sel).status=e.target.value;save();render()}
+ if(e.target.matches('[data-nedb]')){const v=parseFloat(e.target.value);const mm=meta(sel);if(isNaN(v)||v===S.settings.letNedbryd)delete mm.nedbryd;else mm.nedbryd=Math.max(0,v);save();openDrawer(sel,true);render()}});
 $('drawer').addEventListener('input',e=>{if(e.target.matches('[data-note]')){meta(sel).note=e.target.value;save()}});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('drawer').classList.contains('open'))closeDrawer()});
 
 /* ---------- Antagelser og områderang ---------- */
-const FIELDS=[['budget','Låneramme / budget (kr)'],['minAvance','Mindste avance før skat (kr)'],['skoedeFast','Tinglysning skøde, fast (kr)'],['skoedePct','Tinglysning skøde (% af pris)'],['advokat','Advokat ved køb (kr)'],
- ['letKoekken','Let: nyt køkken inkl. installering (kr)'],['letMaling','Let: tapet, spartel, filt, maling (kr/m²)'],['letGulv','Let: slibning og lak af gulv (kr)'],['letElVvs','Let: el og VVS (kr/m²)'],['letLoft','Let: nye lofter (kr/m²)'],['letNedbryd','Let: nedbrydning og bortskaffelse (kr)'],
- ['renoMellem','Mellem renovering (kr/m², foreløbigt skøn)'],['renoTotal','Totalrenovering (kr/m², foreløbigt skøn)'],['bufferPct','Buffer til uforudsete udgifter (% af renovering)'],['mdr','Projektets varighed (mdr.)'],
- ['rente','Rente på finansiering (% p.a.)'],['salgFast','Salgsomkostninger, mægler m.m. (kr)'],['skatPct','Selskabsskat (%)']].concat(NS?[['nsUdvendig','Sommerhus: udvendig maling og træbeskyttelse (kr, Claudes skøn)'],['nsRapport','Sommerhus: tilstands- og elrapport ved salg (kr, Claudes skøn)']]:[]);
+const FIELDS=[['budget','Låneramme / budget (kr)'],['minAvance','Mindste avance (kr)'],['skoedeFast','Tinglysning skøde, fast (kr)'],['skoedePct','Tinglysning skøde (% af pris)'],['advokat','Advokat ved køb (kr)'],
+ ['letKoekken','Let: nyt køkken inkl. installering (kr ekskl. moms)'],['letMaling','Let: tapet, spartel, filt, maling (kr/m² ekskl. moms)'],['letGulv','Let: slibning og lak af gulv (kr ekskl. moms)'],['letElVvs','Let: el og VVS (kr/m² ekskl. moms)'],['letLoft','Let: nye lofter (kr/m² ekskl. moms)'],['letNedbryd','Let: nedbrydning, standard (kr ekskl. moms)'],
+ ['renoMellem','Mellem renovering (kr/m², foreløbigt skøn)'],['renoTotal','Totalrenovering (kr/m², foreløbigt skøn)'],['bufferPct','Buffer til uforudsete udgifter (% af renovering inkl. moms)'],['momsPct','Moms på renovering (%)'],['mdr','Projektets varighed (mdr.)'],
+ ['rente','Rente på finansiering (% p.a.)'],['salgFast','Salgsomkostninger, mægler m.m. (kr)']].concat(NS?[['nsUdvendig','Sommerhus: udvendig maling og træbeskyttelse (kr ekskl. moms, Claudes skøn)'],['nsRapport','Sommerhus: tilstands- og elrapport ved salg (kr, Claudes skøn)']]:[]);
 $('openSettings').addEventListener('click',()=>{const s=S.settings,dlg=$('settings');
  dlg.innerHTML=`<h2>Antagelser</h2><p class="small">Bruges i flip-beregningen for alle boliger.</p>
  <div class="grid2">${FIELDS.map(([k,t])=>`<label>${t}<input type="number" step="any" data-k="${k}" value="${s[k]}"></label>`).join('')}</div>
@@ -366,6 +424,18 @@ document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',(
  document.querySelectorAll('[data-view]').forEach(x=>x.classList.toggle('on',x===b));
  $('main').classList.toggle('show-map',b.dataset.view==='map');setTimeout(()=>map.invalidateSize(),50)}));
 
+/* ---------- Mobil: sammenklappelige filtre ---------- */
+function aktiveFiltre(){let n=0;['proj','budget','avok','ude','fav','saer','nye'].forEach(i=>{if($(i).checked)n++});
+ if(!NS&&!$('hjem').checked)n++;if(SELD.size)n++;if($('t').value)n++;if(+$('min').value>0)n++;if(+$('max').value!==6000000)n++;return n}
+function updFtog(){const n=aktiveFiltre(),open=!$('filters').classList.contains('collapsed');$('ftog').textContent=(open?'Skjul filtre':'Filtre')+(n?` (${n})`:'');$('ftog').setAttribute('aria-expanded',String(open))}
+$('ftog').addEventListener('click',()=>{$('filters').classList.toggle('collapsed');updFtog()});
+$('newbar').addEventListener('click',()=>{$('nye').checked=!$('nye').checked;if($('nye').checked){$('sort').value='nyeste';dir=1;setDirLabel()}render();$('list').scrollTop=0});
+(function(){let last=0,acc=0;const lst=$('list');lst.addEventListener('scroll',()=>{if(innerWidth>860)return;const y=lst.scrollTop,d=y-last;last=y;
+ if(y<20){document.body.classList.remove('compact');acc=0;return}
+ acc=(acc>0)===(d>0)?acc+d:d;
+ if(acc>40&&!document.body.classList.contains('compact')){document.body.classList.add('compact');$('filters').classList.add('collapsed');updFtog();$('dpanel').hidden=true}
+ if(acc<-40)document.body.classList.remove('compact')},{passive:true})})();
+
 /* ---------- Områdevælger med flueben ---------- */
 const AKEY='flipradar.areas.'+MARKET;let ALLD=[],SELD=new Set();try{SELD=new Set(JSON.parse(localStorage.getItem(AKEY))||[])}catch(e){}
 const ALLTXT=()=>NS?'Alle byer':'Alle bydele';
@@ -383,13 +453,18 @@ function init(d){META=d;ZONES=d.zoner||[];Z=Object.fromEntries(ZONES.map(z=>[z.i
  LISTINGS=(d.boliger||[]).filter(l=>l.id&&l.lat&&l.lng);
  LISTINGS.forEach(l=>{const n=l.marked?.niveau;l.rabat=n?1-l.m2pris/n:null;l.flag=FLIPWORDS.test((l.titel||'')+' '+(l.beskrivelse||''));l.hjemfald=HJEMFALD.test((l.titel||'')+' '+(l.beskrivelse||''))});
  byId=Object.fromEntries(LISTINGS.map(l=>[l.id,l]));
+ const forste=!Object.keys(FIRST).length;
+ LISTINGS.forEach(l=>{if(!(l.id in FIRST))FIRST[l.id]=forste?1:NOW});
+ Object.keys(FIRST).forEach(id=>{if(!byId[id])delete FIRST[id]});save();
  DISTRICTS=[...new Set(ZONES.map(z=>z.d))];
  ALLD=[...new Set(LISTINGS.map(l=>l.distrikt))].sort((a,b)=>a.localeCompare(b,'da'));
  [...SELD].forEach(x=>{if(!ALLD.includes(x))SELD.delete(x)});buildAreas();
  const t=new Date(d.opdateret),timer=(Date.now()-t)/36e5;
  $('note').textContent=`Opdateret ${t.toLocaleString('da-DK',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}: ${LISTINGS.length} boliger til salg og ${fmt(d.antalHandler||0)} frie handler fra de seneste ${d.regler?.dage||120} dage.`+(timer>12?' Dataene er over 12 timer gamle, så tjek at den automatiske opdatering kører på GitHub.':'');
  $('note').classList.toggle('ok',timer<=12);
- drawZones();render()}
+ drawZones();render();
+ const b=URLP.get('b');if(b){if(byId[b])openDrawer(b);else toast('Boligen er ikke længere til salg')}}
+(function(){const d=document.createElement('div');d.className='legend';d.innerHTML='<div><i style="background:#2E8B57"></i>Min. avance</div><div><i style="background:#E0A800"></i>Under mål</div><div><i style="background:#C2493D"></i>Underskud</div><div><i class="ring"></i>Ny eller prisfald</div>';$('map').appendChild(d)})();
 document.querySelectorAll('[data-m]').forEach(b=>{b.classList.toggle('on',b.dataset.m===MARKET);b.addEventListener('click',()=>{if(b.dataset.m===MARKET)return;try{localStorage.setItem('flipradar.market',b.dataset.m)}catch(e){}location.reload()})});
 if(NS){$('t').closest('label').style.display='none';$('dlabel').textContent='By';$('hjem').closest('label').style.display='none';$('hjem').checked=false}
 fetch(NS?'data/nordsjaelland.json':'data/listings.json',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error(r.status);return r.json()}).then(init)

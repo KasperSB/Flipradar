@@ -31,11 +31,13 @@ HEADERS = {
 MAX_PRICE = 10_000_000     # boliger til salg op til denne pris
 SALES_DAYS = 120           # handler fra de seneste 4 måneder
 FALLBACK_DAYS = SALES_DAYS # udvid aldrig ud over 4 måneder
+NAER_RADIUS = 500          # de 5 nærmeste handler skal ligge højst så mange meter væk
 MIN_COMPS = 8              # mindst så mange handler før tallet regnes som solidt
 # Søgetrin: (dage tilbage, radius i meter). Første trin med nok handler bruges.
 STEPS = [(SALES_DAYS, 500), (SALES_DAYS, 1000), (SALES_DAYS, 1500), (SALES_DAYS, 2500)]
 LISTING_WEIGHT = 0.5       # en aktuel annonce vejer halvt så meget som en handel
-LISTING_WEIGHT_OLD = 0.25  # annoncer der har ligget over 90 dage vejer endnu mindre
+LISTING_WEIGHT_OLD = 0.25  # annoncer der har ligget længe vejer endnu mindre
+OLD_DAYS = 70              # grænsen for, hvornår en annonce har ligget længe
 
 # Postnumre hos Boliga (fra-til)
 ZIP_RANGES = [(1000, 2000), (2100, 2100), (2150, 2150), (2200, 2200), (2300, 2300),
@@ -372,7 +374,7 @@ def market_for(l, sales, listings, fallback_afslag):
             for s in sales if s["gruppe"] == g and lo * m2 <= s["m2"] <= hi * m2]
     # Salgspris: gennemsnit af de 5 nærmeste lignende handler fra de seneste 4 måneder
     # Kun de seneste 4 måneder; findes der færre end 5, bruges dem der er
-    pool, naer_dage = [(dd, s) for dd, s in cand if s["alder"] <= SALES_DAYS], SALES_DAYS
+    pool, naer_dage = [(dd, s) for dd, s in cand if s["alder"] <= SALES_DAYS and dd <= NAER_RADIUS], SALES_DAYS
     pool.sort(key=lambda x: x[0])
     naer5 = pool[:5]
     sel, days, radius = [], STEPS[-1][0], STEPS[-1][1]
@@ -393,7 +395,7 @@ def market_for(l, sales, listings, fallback_afslag):
         if o["id"] == l["id"] or o["gruppe"] != g or not (lo * m2 <= o["m2"] <= hi * m2):
             continue
         if dist_m(l["lat"], l["lng"], o["lat"], o["lng"]) <= radius:
-            w = LISTING_WEIGHT_OLD if o["liggetid"] > 90 else LISTING_WEIGHT
+            w = LISTING_WEIGHT_OLD if o["liggetid"] > OLD_DAYS else LISTING_WEIGHT
             others.append((o["m2pris"] * (1 + afslag / 100), w))
     list_med = statistics.median([v for v, _ in others]) if others else None
     w_sales, w_list = float(len(vals)), sum(w for _, w in others)
@@ -421,6 +423,7 @@ def market_for(l, sales, listings, fallback_afslag):
         "vaegtSalg": round(w_sales / (w_sales + w_list), 2) if (w_sales + w_list) else None,
         "naer5Snit": round(statistics.mean(s["m2pris"] for _, s in naer5)) if naer5 else None,
         "naer5Dage": naer_dage,
+        "naer5Radius": NAER_RADIUS,
         "naer5": [{"a": s["adresse"], "d": s["dato"], "p": s["pris"], "m2": s["m2"],
                    "kvm": s["m2pris"], "afst": round(dd)} for dd, s in naer5],
         "handler": [{"a": s["adresse"], "d": s["dato"], "p": s["pris"], "m2": s["m2"],
@@ -468,7 +471,7 @@ def main():
     data = {
         "opdateret": NOW.isoformat(timespec="minutes"),
         "regler": {"maxPris": MAX_PRICE, "dage": SALES_DAYS, "minHandler": MIN_COMPS,
-                   "annonceVaegt": LISTING_WEIGHT, "annonceVaegtGammel": LISTING_WEIGHT_OLD},
+                   "annonceVaegt": LISTING_WEIGHT, "annonceVaegtGammel": LISTING_WEIGHT_OLD, "gammelDage": OLD_DAYS},
         "antalHandler": sum(1 for s in sales if s["alder"] <= SALES_DAYS),
         "zoner": zone_stats(sales),
         "boliger": listings,

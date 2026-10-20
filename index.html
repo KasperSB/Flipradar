@@ -229,8 +229,15 @@ const hexFor=r=>r==null?'#A3ADB2':r>=.15?'#2E8B57':r>=.05?'#8DB36B':r>-.05?'#A3A
 const datoTxt=s=>new Date(s).toLocaleDateString('da-DK',{day:'numeric',month:'short',year:'numeric'});
 
 /* ---------- Beregning ---------- */
+/* Salgspris pr. m²: de nære handler (maks. 500 m) vejet mod markedsniveauet efter antal handler */
+function vaegt(n){return n>=5?.7:n>=3?.6:n>=1?.4:0}
+function salgsM2(mk){const niv=mk.niveau||null;
+ if(!Array.isArray(mk.naer5))return{m2:niv,n:null,w:0,naer:null,niv};
+ const n=mk.naer5.length,naer=mk.naer5Snit||null;let w=naer?vaegt(n):0;if(!niv)w=naer?1:0;
+ const m2=w===1?naer:w===0?niv:w*naer+(1-w)*niv;
+ return{m2:m2||null,n,w,naer,niv,afv:naer&&niv?naer/niv-1:null,usikker:n===0}}
 function calc(l,level){const s=S.settings,mk=l.marked||{};level=level||(S.meta[l.id]?.level)||'Let';
- const salgM2=mk.naer5Snit||mk.niveau||null;
+ const sp=salgsM2(mk),salgM2=sp.m2;
  const r=s.rente/100/12*s.mdr,renoEx=renoSumEx(l,level),renoKr=renoSum(l,level),renoMoms=renoKr-renoEx,buffer=renoKr*s.bufferPct/100;
  const skoede=s.skoedeFast+l.pris*s.skoedePct/100,koebOmk=skoede+s.advokat;
  const kapital=l.pris+koebOmk+renoKr+buffer,renter=kapital*r,ejer=l.ejerudgift*s.mdr,hold=renter+ejer;
@@ -240,7 +247,7 @@ function calc(l,level){const s=S.settings,mk=l.marked||{};level=level||(S.meta[l
  const salg=l.m2*salgM2,salgOmk=s.salgFast+(s.nsRapport||0),avance=salg-salgOmk-kontant;
  const k=(1+s.skoedePct/100)*(1+r),fast=(s.skoedeFast+s.advokat+renoKr+buffer)*(1+r)+ejer;
  const maxPris=Math.min((salg-salgOmk-fast-s.minAvance)/k,(s.budget-fast)/k);
- return{...base,salg,salgM2,salgBasis:mk.naer5Snit?'naer5':'niveau',salgOmk,avance,maxPris}}
+ return{...base,salg,salgM2,salgBasis:Array.isArray(mk.naer5)?'naer5':'niveau',sp,salgOmk,avance,maxPris}}
 
 function gauge(r){if(r==null)return '<span class="gauge small">Ingen markedsdata</span>';
  const p=Math.max(-.3,Math.min(.3,r)),w=Math.abs(p)/.3*50,st=p>=0?`left:50%;width:${w}%`:`right:50%;width:${w}%`;
@@ -253,10 +260,12 @@ function tags(l,c){const t=[],mk=l.marked||{};
  if(erHjemfald(l))t.push(`<span class="tag warn">Hjemfaldspligt${l.hjemfald?'':' (markeret af dig)'}</span>`);
  if(l.flag)t.push('<span class="tag">Projektbolig</span>');
  if(l.prisaendring<0)t.push(`<span class="tag">Sat ned ${fmt(-l.prisaendring)} %</span>`);
- if(l.liggetid>90)t.push(`<span class="tag plain">${l.liggetid} dage til salg</span>`);
+ if(l.liggetid>70)t.push(`<span class="tag plain">${l.liggetid} dage til salg</span>`);
  if(!c.budgetOK)t.push('<span class="tag warn">Over budget</span>');
  if(l.asbest)t.push('<span class="tag warn">Asbest i tag</span>');
- if(mk.niveau&&!mk.solid)t.push('<span class="tag plain">Få handler</span>');
+ if(Array.isArray(mk.naer5)&&mk.naer5.length<5)t.push(`<span class="tag ${mk.naer5.length?'plain':'warn'}">${mk.naer5.length?mk.naer5.length+' handler inden for '+fmt(mk.naer5Radius||500)+' m':'Usikker salgspris: ingen handler inden for '+fmt(mk.naer5Radius||500)+' m'}</span>`);
+ if(c.sp&&c.sp.afv!=null&&Math.abs(c.sp.afv)>.15)t.push(`<span class="tag warn">Nære handler ${c.sp.afv>0?'over':'under'} markedet med ${fmt(Math.abs(c.sp.afv)*100)} %</span>`);
+ else if(mk.niveau&&!mk.solid)t.push('<span class="tag plain">Få handler</span>');
  if(l.altan||l.terrasse)t.push(`<span class="tag plain">${l.altan?'Altan':'Terrasse'}</span>`);
  const st=S.meta[l.id]?.status;if(S.favs[l.id]&&st&&st!=='Ny')t.push(`<span class="tag plain">${esc(st)}</span>`);
  return t.join('')}
@@ -351,7 +360,7 @@ function openDrawer(id,keep){const l=byId[id];if(!l)return;
  <div>${gauge(l.rabat)}</div>
  <h3>Budget og flip-beregning</h3>${NS?'<p class="small bad">Selskabers køb af sommerhuse kræver som udgangspunkt tilladelse efter sommerhuslovens § 8. Få det afklaret med en advokat, før I byder.</p>':''}<div class="calc">
  <div class="seg" role="group" aria-label="Renoveringsniveau">${['Let','Mellem','Total'].map(v=>`<button data-level="${v}" class="${m.level===v?'on':''}">${v} (${kr(renoSum(l,v))})</button>`).join('')}</div>
- ${c.salg==null?'<p class="small">Der er ikke markedsdata nok til at regne en salgspris ud.</p>':`<table>
+ ${c.salg==null?'<p class="small bad">Der er hverken handler inden for 500 m eller et markedsniveau for området, så der kan ikke regnes en salgspris ud.</p>':`<table>
  <tr><td>Købspris</td><td>${kr(l.pris)}</td></tr>
  <tr><td>Tinglysning af skøde (${kr(s.skoedeFast)} + ${String(s.skoedePct).replace('.',',')} %)</td><td>${kr(c.skoede)}</td></tr>
  <tr><td>Advokat</td><td>${kr(s.advokat)}</td></tr>
@@ -368,8 +377,14 @@ function openDrawer(id,keep){const l=byId[id];if(!l)return;
  <div class="big ${c.avance>=s.minAvance?'good':c.avance<0?'bad':''}">${c.avance<0?'−':''}${kr(Math.abs(c.avance))}</div>
  <div class="small">Forventet avance. Dit mål er mindst ${kr(s.minAvance)}, og budgettet er ${kr(s.budget)}.</div>
  <p><b>Max købspris: ${c.maxPris>0?kr(c.maxPris):'regnestykket holder ikke'}</b><br><span class="small">Den højeste pris, der stadig giver dit mindstemål i avance og holder dig inden for budgettet.</span></p>
- ${c.salgBasis==='naer5'?`<p class="small">Salgsprisen er ${l.m2} m² × ${fmt(c.salgM2)} kr/m², gennemsnittet af de ${l.marked.naer5.length} nærmeste frie handler af lignende boliger fra de seneste ${l.marked.naer5Dage} dage:</p>${l.marked.naer5.length<5?`<p class="small bad">Der er kun fundet ${l.marked.naer5.length} lignende handler inden for 4 måneder, så salgsprisen er mere usikker.</p>`:''}
- <div class="wrapx"><table class="comps"><thead><tr><th>Handel</th><th>Dato</th><th class="r">m²</th><th class="r">kr/m²</th><th class="r">Afstand</th></tr></thead><tbody>${l.marked.naer5.map(h=>`<tr><td>${esc(h.a)}</td><td>${datoTxt(h.d)}</td><td class="r">${h.m2}</td><td class="r">${fmt(h.kvm)}</td><td class="r">${fmt(h.afst)} m</td></tr>`).join('')}</tbody></table></div>`:'<p class="small">De 5 nærmeste handler er ikke hentet endnu, så salgsprisen er midlertidigt sat til markedsniveauet. Det retter sig ved næste dataopdatering.</p>'}`}</div>
+ ${c.salgBasis==='naer5'?`<h3>Sådan er salgsprisen fundet</h3><div class="mkt">
+ <div><span>Nære handler</span><b>${c.sp.naer?fmt(c.sp.naer):'–'}</b><span>${c.sp.n} ${c.sp.n===1?'handel':'handler'} inden for ${fmt(l.marked.naer5Radius||500)} m, ${l.marked.naer5Dage} dage</span></div>
+ <div><span>Markedsniveau</span><b>${c.sp.niv?fmt(c.sp.niv):'–'}</b><span>handler og annoncer i området</span></div>
+ <div><span>Brugt</span><b>${fmt(c.salgM2)}</b><span>${Math.round(c.sp.w*100)} % nære / ${Math.round((1-c.sp.w)*100)} % marked</span></div></div>
+ <p class="small">Alle tal er kr/m². Jo flere handler inden for ${fmt(l.marked.naer5Radius||500)} m, jo mere vægter de: 5 handler 70 %, 3–4 handler 60 %, 1–2 handler 40 %, ingen handler 0 %. Resten kommer fra markedsniveauet.</p>
+ ${c.sp.usikker?`<p class="small bad">Der er ingen sammenlignelige handler inden for ${fmt(l.marked.naer5Radius||500)} m, så salgsprisen bygger kun på markedsniveauet og er usikker.</p>`:c.sp.n<5?`<p class="small bad">Der er kun ${c.sp.n} lignende ${c.sp.n===1?'handel':'handler'} inden for ${fmt(l.marked.naer5Radius||500)} m, så markedsniveauet vægter mere.</p>`:''}
+ ${c.sp.afv!=null&&Math.abs(c.sp.afv)>.15?`<p class="small bad">De nære handler ligger ${fmt(Math.abs(c.sp.afv)*100)} % ${c.sp.afv>0?'over':'under'} markedsniveauet. Tjek om en enkelt handel stikker ud.</p>`:''}
+ ${c.sp.n?`<div class="wrapx"><table class="comps"><thead><tr><th>Handel</th><th>Dato</th><th class="r">m²</th><th class="r">kr/m²</th><th class="r">Afstand</th></tr></thead><tbody>${l.marked.naer5.map(h=>`<tr><td>${esc(h.a)}</td><td>${datoTxt(h.d)}</td><td class="r">${h.m2}</td><td class="r">${fmt(h.kvm)}</td><td class="r">${fmt(h.afst)} m</td></tr>`).join('')}</tbody></table></div>`:''}`:'<p class="small">De nærmeste handler er ikke hentet endnu, så salgsprisen er midlertidigt sat til markedsniveauet. Det retter sig ved næste dataopdatering.</p>'}`}</div>
  ${l.saerlig?`<p class="bad">Annoncen nævner "${esc(l.saerlig)}". Boligen har sandsynligvis særlige vilkår og kan ikke sammenlignes direkte med almindelige frie salg. Læs annoncen grundigt.</p>`:''}
  ${!l.saerlig&&tjek(l)?'<p class="bad">Prisen ligger over 40 % under markedsniveauet. Det skyldes oftest særlige vilkår, som ikke fremgår af de første linjer i annoncen. Tjek annoncen, før du regner videre.</p>':''}
  ${l.titel?`<h3>${esc(l.titel)}</h3>`:''}<p>${esc(l.beskrivelse)}${l.beskrivelse.length>=480?' ...':''}</p>

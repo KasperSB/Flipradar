@@ -425,7 +425,8 @@ def market_for(l, sales, listings, fallback_afslag):
         "naer5Dage": naer_dage,
         "naer5Radius": NAER_RADIUS,
         "naer5": [{"a": s["adresse"], "d": s["dato"], "p": s["pris"], "m2": s["m2"],
-                   "kvm": s["m2pris"], "afst": round(dd)} for dd, s in naer5],
+                   "kvm": s["m2pris"], "afst": round(dd),
+                   "lat": round(s["lat"], 6), "lng": round(s["lng"], 6)} for dd, s in naer5],
         "handler": [{"a": s["adresse"], "d": s["dato"], "p": s["pris"], "m2": s["m2"],
                      "kvm": s["m2pris"], "afst": round(dd)} for dd, s in sel[:10]],
     }

@@ -124,6 +124,12 @@ dialog::backdrop{background:rgba(24,35,43,.45)}
 #map{position:relative}
 .nedb{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px;color:var(--muted);margin:8px 0 2px}
 .nedb input{width:110px;border:1px solid var(--line);border-radius:6px;padding:5px 7px}
+.tip{font:12px/1.45 "Archivo",system-ui,sans-serif;color:var(--ink);min-width:150px}
+.tip b{font-weight:700}.tip .good b{color:var(--good)}.tip .bad b{color:var(--bad)}
+.tipny{display:inline-block;background:var(--ink);color:#fff;font-size:10px;font-weight:700;border-radius:3px;padding:0 4px;margin-right:5px;vertical-align:1px}
+.tipbtn{margin-top:6px;padding:4px 10px;font-size:12px;width:100%}
+.tippop .leaflet-popup-content{margin:8px 10px}
+.tippop .leaflet-popup-content-wrapper{border-radius:8px}
 .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:9px 14px;border-radius:8px;font-size:14px;z-index:2000}
 @media (max-width:860px){
  .top{padding:8px 12px;padding-top:calc(8px + env(safe-area-inset-top,0px));gap:8px}
@@ -211,6 +217,7 @@ const meta=id=>S.meta[id]||(S.meta[id]={level:'Let',status:'Ny',note:''});
 const zoneRank=z=>z?(S.rank[z.id]||z.autoRank||null):null;
 const rankTxt=z=>zoneRank(z)??'–';
 const NOW=Date.now(),NYT_TIMER=24;
+const TOUCH=matchMedia('(hover: none)').matches;
 const FIRST=S.first[MARKET]||(S.first[MARKET]={});
 const isNy=l=>FIRST[l.id]>0&&(NOW-FIRST[l.id])/36e5<NYT_TIMER;
 const prisfald=l=>{const sn=S.snap[l.id];return S.favs[l.id]&&sn&&sn.pris&&l.pris<sn.pris?sn.pris-l.pris:0};
@@ -303,8 +310,18 @@ function drawMarkers(arr){markers.clearLayers();arr.forEach(l=>{
  const m=S.favs[l.id]?L.marker([l.lat,l.lng],{zIndexOffset:ny?1000:0,icon:L.divIcon({className:'',iconSize:[22,22],iconAnchor:[11,11],html:`<span class="mk-heart" style="${ny?'text-shadow:0 0 0 #fff,0 0 4px #18232B,0 0 4px #18232B':''}">♥</span>`})})
   :L.circleMarker([l.lat,l.lng],{radius:l.id===sel?11:ny?10:7,color:ny?'#18232B':'#fff',weight:ny?3:2,fillColor:avHex(l),fillOpacity:.95});
  if(ny&&m.bringToFront)setTimeout(()=>m.bringToFront&&m.bringToFront(),0);
- m.bindTooltip(`${ny?'<b>Ny</b> ':''}${esc(l.adresse)}<br>${kr(l.pris)}, ${l.m2} m²${c.avance!=null?'<br>Avance '+(c.avance<0?'−':'')+kr(Math.abs(c.avance)):''}`);
- m.on('click',()=>openDrawer(l.id));m.addTo(markers)})}
+ if(TOUCH){m.bindPopup(tipHTML(l,c,ny,true),{closeButton:false,autoPanPadding:[20,20],className:'tippop'})}
+ else{m.bindTooltip(tipHTML(l,c,ny,false),{direction:'top',offset:[0,-6],className:'tiptool'});m.on('click',()=>openDrawer(l.id))}
+ m.addTo(markers)})}
+/* Kort info om en bolig: vises ved mus over prikken på computer og ved tryk på telefon */
+function tipHTML(l,c,ny,knap){const fald=prisfald(l);
+ return `<div class="tip">${ny?'<span class="tipny">Ny</span>':''}<b>${esc(l.adresse)}</b>
+ <div>${kr(l.pris)}, ${l.m2} m²</div>
+ <div>Køb ${fmt(l.m2pris)} kr/m²${c.salgM2?` → salg ${fmt(c.salgM2)} kr/m²`:''}</div>
+ ${c.avance!=null?`<div class="${c.avance>=S.settings.minAvance?'good':c.avance<0?'bad':''}">Avance <b>${c.avance<0?'−':''}${kr(Math.abs(c.avance))}</b></div>`:'<div class="small">Ingen salgspris</div>'}
+ ${fald?`<div class="small">Sat ned ${kr(fald)}</div>`:''}
+ ${knap?`<button type="button" class="btn tipbtn" data-open="${esc(l.id)}">Se detaljer</button>`:''}</div>`}
+document.addEventListener('click',e=>{const o=e.target.closest('[data-open]');if(o){map.closePopup&&map.closePopup();openDrawer(o.dataset.open)}});
 
 /* ---------- Liste ---------- */
 function rowHTML(l){const z=Z[l.zone],c=calc(l),f=!!S.favs[l.id];

@@ -31,6 +31,7 @@ HEADERS = {
 MAX_PRICE = 10_000_000     # boliger til salg op til denne pris
 SALES_DAYS = 120           # handler fra de seneste 4 måneder
 FALLBACK_DAYS = SALES_DAYS # udvid aldrig ud over 4 måneder
+NAER_RADII = None          # fx [500, 1000]: start ved 500 m og udvid kun, hvis der er under 5 handler
 NAER_RADIUS = 500          # de 5 nærmeste handler skal ligge højst så mange meter væk
 MIN_COMPS = 8              # mindst så mange handler før tallet regnes som solidt
 # Søgetrin: (dage tilbage, radius i meter). Første trin med nok handler bruges.
@@ -76,8 +77,13 @@ SPECIAL = re.compile(
 LISTING_TYPES = "condo,terraced house,villa"  # boligtyper hos Boligsiden
 ZONE_GROUP = "lejl"                           # boligtype, som områderne rangeres efter
 TYPE_MAP = {"condo": "Ejerlejlighed", "terraced house": "Rækkehus", "villa": "Villa"}
-GROUP = {"Ejerlejlighed": "lejl", "Rækkehus": "hus", "Villa": "hus"}
-BOLIGA_GROUP = {3: "lejl", 9: "lejl", 1: "hus", 2: "hus"}
+GROUP = {"Ejerlejlighed": "lejl", "Rækkehus": "raekke", "Villa": "villa"}
+BOLIGA_GROUP = {3: "lejl", 9: "lejl", 1: "villa", 2: "raekke"}
+# Villaer og rækkehuse sammenlignes hver for sig. Er der for få handler af samme type,
+# bruges begge typer (samme familie), og det markeres.
+FAMILY = {"lejl": "lejl", "villa": "hus", "raekke": "hus", "hus": "hus"}
+MIN_SAME = 3                # mindst så mange nære handler af samme type, før familien tages i brug
+PAGE_LIMIT = 300            # maks. antal sider pr. søgning
 
 NOW = datetime.now(timezone.utc)
 
@@ -196,6 +202,7 @@ def parse_case(c):
         "m2": area,
         "m2pris": round(price / area),
         "vaer": c.get("numberOfRooms"),
+        "bad": c.get("numberOfBathrooms"),
         "etage": a.get("floor"),
         "grund": c.get("lotArea") if typ != "Ejerlejlighed" else None,
         "byggeaar": c.get("yearBuilt"),
@@ -221,7 +228,7 @@ def parse_case(c):
 
 def fetch_listings_query(params, label):
     cases, page, total = [], 1, None
-    while page <= 80:
+    while page <= PAGE_LIMIT:
         q = dict(params, priceMax=MAX_PRICE, per_page=50, page=page)
         url = "https://api.boligsiden.dk/search/cases?" + urllib.parse.urlencode(q)
         data = get_json(url)
@@ -329,7 +336,7 @@ def fetch_sales():
     sales, raw = [], 0
     for lo, hi in ZIP_RANGES:
         key, ok, part, page = f"{lo}-{hi}", True, [], 1
-        while page <= 80:
+        while page <= PAGE_LIMIT:
             url = ("https://api.boliga.dk/api/v2/sold/search/results?searchTab=1&sort=date-d"
                    f"&page={page}&zipcodeFrom={lo}&zipcodeTo={hi}&salesDateMin={since}")
             data = get_json(url)
@@ -370,18 +377,40 @@ def refresh_age(s):
 def market_for(l, sales, listings, fallback_afslag):
     g, m2 = l["gruppe"], l["m2"]
     lo, hi = (0.7, 1.3) if g == "lejl" else (0.6, 1.5)
-    cand = [(dist_m(l["lat"], l["lng"], s["lat"], s["lng"]), s)
-            for s in sales if s["gruppe"] == g and lo * m2 <= s["m2"] <= hi * m2]
-    # Salgspris: gennemsnit af de 5 nærmeste lignende handler fra de seneste 4 måneder
-    # Kun de seneste 4 måneder; findes der færre end 5, bruges dem der er
-    pool, naer_dage = [(dd, s) for dd, s in cand if s["alder"] <= SALES_DAYS and dd <= NAER_RADIUS], SALES_DAYS
-    pool.sort(key=lambda x: x[0])
+    fam = FAMILY.get(g, g)
+    cand_fam = [(dist_m(l["lat"], l["lng"], s["lat"], s["lng"]), s)
+                for s in sales if FAMILY.get(s["gruppe"], s["gruppe"]) == fam and lo * m2 <= s["m2"] <= hi * m2]
+    cand = [(dd, s) for dd, s in cand_fam if s["gruppe"] == g]
+    # Salgspris: gennemsnit af de 5 nærmeste lignende handler inden for NAER_RADIUS og perioden.
+    # Findes der færre end 5, bruges dem der er. Under MIN_SAME af samme type: begge typer.
+    radii = NAER_RADII or [NAER_RADIUS]
+
+    def near(c):
+        for r in radii:
+            p = sorted([(dd, s) for dd, s in c if s["alder"] <= SALES_DAYS and dd <= r], key=lambda x: x[0])
+            if len(p) >= 5:
+                break
+        return p, r
+    (pool, naer_r), naer_dage, naer_blandet = near(cand), SALES_DAYS, False
+    if len(pool) < MIN_SAME and len(cand_fam) > len(cand):
+        pool_f, r_f = near(cand_fam)
+        if len(pool_f) > len(pool):
+            pool, naer_r, naer_blandet = pool_f, r_f, True
     naer5 = pool[:5]
-    sel, days, radius = [], STEPS[-1][0], STEPS[-1][1]
-    for days, radius in STEPS:
-        sel = [(dd, s) for dd, s in cand if dd <= radius and s["alder"] <= days]
-        if len(sel) >= MIN_COMPS:
-            break
+
+    def levels(c):
+        sel, days, radius = [], STEPS[-1][0], STEPS[-1][1]
+        for days, radius in STEPS:
+            sel = [(dd, s) for dd, s in c if dd <= radius and s["alder"] <= days]
+            if len(sel) >= MIN_COMPS:
+                break
+        return sel, days, radius
+    sel, days, radius = levels(cand)
+    niv_blandet = False
+    if len(sel) < MIN_COMPS and len(cand_fam) > len(cand):
+        sel_f, days_f, radius_f = levels(cand_fam)
+        if len(sel_f) > len(sel):
+            sel, days, radius, niv_blandet = sel_f, days_f, radius_f, True
     sel.sort(key=lambda x: x[0])
     vals = [s["m2pris"] for _, s in sel]
     sale_med = statistics.median(vals) if vals else None
@@ -392,7 +421,7 @@ def market_for(l, sales, listings, fallback_afslag):
 
     others = []
     for o in listings:
-        if o["id"] == l["id"] or o["gruppe"] != g or not (lo * m2 <= o["m2"] <= hi * m2):
+        if o["id"] == l["id"] or FAMILY.get(o["gruppe"], o["gruppe"]) != fam or (o["gruppe"] != g and not niv_blandet) or not (lo * m2 <= o["m2"] <= hi * m2):
             continue
         if dist_m(l["lat"], l["lng"], o["lat"], o["lng"]) <= radius:
             w = LISTING_WEIGHT_OLD if o["liggetid"] > OLD_DAYS else LISTING_WEIGHT
@@ -423,7 +452,10 @@ def market_for(l, sales, listings, fallback_afslag):
         "vaegtSalg": round(w_sales / (w_sales + w_list), 2) if (w_sales + w_list) else None,
         "naer5Snit": round(statistics.mean(s["m2pris"] for _, s in naer5)) if naer5 else None,
         "naer5Dage": naer_dage,
-        "naer5Radius": NAER_RADIUS,
+        "naer5Radius": naer_r,
+        "naer5Radier": radii,
+        "naer5Blandet": naer_blandet,
+        "nivBlandet": niv_blandet,
         "naer5": [{"a": s["adresse"], "d": s["dato"], "p": s["pris"], "m2": s["m2"],
                    "kvm": s["m2pris"], "afst": round(dd),
                    "lat": round(s["lat"], 6), "lng": round(s["lng"], 6)} for dd, s in naer5],
@@ -433,7 +465,7 @@ def market_for(l, sales, listings, fallback_afslag):
 
 
 def zone_stats(sales):
-    recent = [s for s in sales if s["gruppe"] == ZONE_GROUP and s["alder"] <= SALES_DAYS]
+    recent = [s for s in sales if FAMILY.get(s["gruppe"], s["gruppe"]) == FAMILY.get(ZONE_GROUP, ZONE_GROUP) and s["alder"] <= SALES_DAYS]
     zones = []
     for zid, d, name, lat, lon in ZONES:
         vals = [s["m2pris"] for s in recent if s["zone"] == zid]
@@ -457,10 +489,10 @@ def main():
 
     recent = [s for s in sales if s["alder"] <= SALES_DAYS and s["afslag"] is not None]
     fallback = {}
-    for g in ("lejl", "hus"):
+    for g in sorted({s["gruppe"] for s in sales}):
         v = [s["afslag"] for s in recent if s["gruppe"] == g]
         fallback[g] = statistics.median(v) if v else -3.0
-    log(f"Typisk afslag ift. udbudspris: lejligheder {fallback['lejl']:.1f} %, huse {fallback['hus']:.1f} %")
+    log("Typisk afslag ift. udbudspris: " + ", ".join(f"{g} {v:.1f} %" for g, v in fallback.items()))
 
     for l in listings:
         l["marked"] = market_for(l, sales, listings, fallback)

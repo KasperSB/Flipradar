@@ -74,6 +74,43 @@ SPECIAL = re.compile(
     r"fritidsbolig|sommerhus|lejet grund|ikke godkendt til (?:hel[åa]rs)?beboelse|erhvervslejemål|"
     r"erhvervsejendom|byggegrund|grund til salg|tvangsauktion|auktion", re.I)
 
+# Renoverede boliger: annoncer, der beskriver boligen som nyrenoveret, gemmes i et arkiv.
+# Når boligen senere dukker op som solgt hos Boliga, ved vi, at handlen var en renoveret bolig.
+REN = re.compile(
+    r"totalrenover|gennemrenover|nyrenoveret (?:hus|villa|rækkehus|bolig|lejlighed|ejendom)|"
+    r"nyistandsat|totalistandsat|gennemgribende (?:renover|istandsat)|kernerenover|fuldt renover|"
+    r"fremstår som ny|renoveret fra kælder til kvist|renoveret i top|alt er nyt|"
+    r"nyt køkken og (?:nyt )?bad|nyt bad og (?:nyt )?køkken|nye? køkken og nye? badeværelse|"
+    r"nyt badeværelse og (?:nyt )?køkken|renoveret med (?:nyt )?køkken og bad", re.I)
+# Ord, der tyder på, at boligen skal renoveres. De vejer tungest, hvis begge dele står i teksten.
+TIL = re.compile(
+    r"renoveringsprojekt|trænger til|kræver renovering|behov for renovering|renoveringskrævende|"
+    r"håndværkertilbud|håndværkerbolig|projektbolig|sæt dit eget præg|sætte dit eget præg|"
+    r"renoveringsklar|oprindelig stand|originalstand|original stand|dødsbo|kærlig hånd", re.I)
+ARKIV_DAYS = 540            # annoncer gemmes i arkivet i 18 måneder
+ARKIV_FILE = None           # sættes ud fra OUT_FILE
+
+
+def addr_key(adresse, postnr, kun_hus=False):
+    """Fælles nøgle for en adresse hos Boligsiden og Boliga."""
+    a = (adresse or "").lower()
+    if kun_hus:
+        a = a.split(",")[0]
+    a = re.sub(r"[^0-9a-zæøåéü]+", " ", a)
+    a = re.sub(r"\b(\d+) ([a-z])\b", r"\1\2", a)  # "12 a" -> "12a"
+    return " ".join(a.split()) + "|" + str(postnr or "")
+
+
+def stand_of(text):
+    if not text:
+        return None
+    if TIL.search(text):
+        return "trænger"
+    if REN.search(text):
+        return "renoveret"
+    return "ukendt"
+
+
 LISTING_TYPES = "condo,terraced house,villa"  # boligtyper hos Boligsiden
 ZONE_GROUP = "lejl"                           # boligtype, som områderne rangeres efter
 TYPE_MAP = {"condo": "Ejerlejlighed", "terraced house": "Rækkehus", "villa": "Villa"}
@@ -215,6 +252,7 @@ def parse_case(c):
         "terrasse": bool(c.get("hasTerrace")),
         "asbest": "asbest" in roofs.lower(),
         "saerlig": special.group(0).lower() if special else None,
+        "stand": stand_of(text),
         "titel": c.get("descriptionTitle") or "",
         "beskrivelse": c.get("descriptionBody") or "",
         "lat": lat,
@@ -373,6 +411,66 @@ def refresh_age(s):
     return s["alder"]
 
 
+# ---------- Arkiv over annoncer: hvilke solgte boliger var renoverede ----------
+def arkiv_path():
+    return ARKIV_FILE or os.path.join(os.path.dirname(OUT_FILE), "arkiv_" + os.path.basename(OUT_FILE))
+
+
+def update_arkiv(listings):
+    """Gemmer hver annonces adresse, størrelse, pris og stand. Bevares i 18 måneder."""
+    try:
+        with open(arkiv_path(), encoding="utf-8") as f:
+            ark = json.load(f)
+    except (OSError, ValueError):
+        ark = {}
+    today = NOW.date().isoformat()
+    for l in listings:
+        k = addr_key(l["adresse"], l["postnr"])
+        e = ark.get(k) or {"f": today}
+        e.update({"a": l["adresse"], "z": l["postnr"], "g": l["gruppe"], "m2": l["m2"],
+                  "p": l["pris"], "t": today, "u": l["url"]})
+        if l.get("stand") and l["stand"] != "ukendt":
+            e["s"] = l["stand"]
+        else:
+            e.setdefault("s", l.get("stand") or "ukendt")
+        ark[k] = e
+    cut = (NOW - timedelta(days=ARKIV_DAYS)).date().isoformat()
+    ark = {k: e for k, e in ark.items() if e.get("t", "") >= cut}
+    with open(arkiv_path(), "w", encoding="utf-8") as f:
+        json.dump(ark, f, ensure_ascii=False, separators=(",", ":"))
+    n = {}
+    for e in ark.values():
+        n[e.get("s")] = n.get(e.get("s"), 0) + 1
+    log(f"Annoncearkiv: {len(ark)} adresser (" + ", ".join(f"{k}: {v}" for k, v in sorted(n.items(), key=str)) + ")")
+    return ark
+
+
+def match_stand(sales, ark):
+    """Finder solgte boliger, som vi har set i en annonce, og overfører annoncens stand."""
+    full, hus = {}, {}
+    for k, e in ark.items():
+        full[k] = e
+        if e.get("g") != "lejl":
+            hus.setdefault(addr_key(e["a"], e["z"], True), e)
+    found = ren = 0
+    for s in sales:
+        e = full.get(addr_key(s["adresse"], s["postnr"]))
+        if not e and s["gruppe"] != "lejl":
+            e = hus.get(addr_key(s["adresse"], s["postnr"], True))
+        if not e or not e.get("m2") or abs(s["m2"] - e["m2"]) > 0.15 * e["m2"]:
+            continue
+        # Handlen skal ligge efter, at annoncen dukkede op, og senest et halvt år efter den forsvandt
+        f = datetime.fromisoformat(e["f"]).date() - timedelta(days=60)
+        t = datetime.fromisoformat(e["t"]).date() + timedelta(days=180)
+        d = datetime.fromisoformat(s["dato"]).date()
+        if not (f <= d <= t):
+            continue
+        s["stand"], s["annonce"], s["udbud"] = e.get("s"), e.get("u"), e.get("p")
+        found += 1
+        ren += e.get("s") == "renoveret"
+    log(f"Handler genkendt fra vores annoncearkiv: {found}, heraf {ren} renoverede")
+
+
 # ---------- Markedsniveau ----------
 def market_for(l, sales, listings, fallback_afslag):
     g, m2 = l["gruppe"], l["m2"]
@@ -397,6 +495,14 @@ def market_for(l, sales, listings, fallback_afslag):
         if len(pool_f) > len(pool):
             pool, naer_r, naer_blandet = pool_f, r_f, True
     naer5 = pool[:5]
+    # Renoverede handler af samme type og størrelse i nærheden (fra annoncearkivet)
+    ren_pool = []
+    for r in radii:
+        ren_pool = sorted([(dd, s) for dd, s in cand if s.get("stand") == "renoveret"
+                           and s["alder"] <= SALES_DAYS and dd <= r], key=lambda x: x[0])
+        if len(ren_pool) >= 3:
+            break
+    ren5 = ren_pool[:5]
 
     def levels(c):
         sel, days, radius = [], STEPS[-1][0], STEPS[-1][1]
@@ -458,7 +564,13 @@ def market_for(l, sales, listings, fallback_afslag):
         "nivBlandet": niv_blandet,
         "naer5": [{"a": s["adresse"], "d": s["dato"], "p": s["pris"], "m2": s["m2"],
                    "kvm": s["m2pris"], "afst": round(dd),
-                   "lat": round(s["lat"], 6), "lng": round(s["lng"], 6)} for dd, s in naer5],
+                   "lat": round(s["lat"], 6), "lng": round(s["lng"], 6),
+                   "st": s.get("stand")} for dd, s in naer5],
+        "renSnit": round(statistics.mean(s["m2pris"] for _, s in ren5)) if ren5 else None,
+        "renAntal": len(ren5),
+        "ren": [{"a": s["adresse"], "d": s["dato"], "p": s["pris"], "m2": s["m2"], "kvm": s["m2pris"],
+                 "afst": round(dd), "lat": round(s["lat"], 6), "lng": round(s["lng"], 6),
+                 "u": s.get("annonce") or ""} for dd, s in ren5],
         "handler": [{"a": s["adresse"], "d": s["dato"], "p": s["pris"], "m2": s["m2"],
                      "kvm": s["m2pris"], "afst": round(dd)} for dd, s in sel[:10]],
     }
@@ -487,6 +599,8 @@ def main():
         log("Mangler data fra en af kilderne. Den gamle datafil bevares.")
         sys.exit(1)
 
+    match_stand(sales, update_arkiv(listings))
+
     recent = [s for s in sales if s["alder"] <= SALES_DAYS and s["afslag"] is not None]
     fallback = {}
     for g in sorted({s["gruppe"] for s in sales}):
@@ -498,6 +612,7 @@ def main():
         l["marked"] = market_for(l, sales, listings, fallback)
     solid = sum(1 for l in listings if l["marked"]["solid"])
     log(f"Særlige vilkår fundet i {sum(1 for l in listings if l['saerlig'])} annoncer (fx udlejet, andel, kolonihave)")
+    log(f"Boliger med renoverede handler i nærheden: {sum(1 for l in listings if l['marked']['renAntal'])}")
     log(f"Markedsniveau beregnet: {solid} af {len(listings)} boliger har mindst {MIN_COMPS} handler fra de seneste {SALES_DAYS} dage")
 
     os.makedirs(os.path.dirname(OUT_FILE), exist_ok=True)
